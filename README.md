@@ -96,11 +96,19 @@ Fix: `test\fix-state.js` — removes Chat from the global pinned list, registers
 ## Development
 
 ```
-node test/mock-verify.js      # mock vscode API contract checks
-node test/ui-smoke.js         # jsdom render checks of the webview UI (24 checks)
-node test/protocol-smoke.js   # end-to-end against a real service (create/stream/stop/archive)
-node test/bridge-e2e.js       # full bridge chain (mock vscode + real 3080)
+node test/respond-wire-verify.js   # permission/question answer wire shape (14 checks, headless)
+node test/real-launch-verify.js    # spawns the real dsh web server through the launch chain
+node test/spawn-verify.js          # launch-chain (checkout / dsh CLI / npx) checks
 ```
+
+`respond-wire-verify.js` is the regression guard for the sidebar's permission
+buttons: it stands up a fake dsh gateway, activates the extension against it,
+pushes an `approval/*` and a `question/*` frame into the sidebar webview, and
+asserts the `POST /api/respond` envelope. The gateway routes client-responses by
+the echoed `rpcId` and then validates the payload against
+`approvalResponsePayloadSchema` / `questionResponsePayloadSchema`, both of which
+require `sessionId`; a wrong shape is rejected with `{accepted:false}` and
+surfaces to the user as `server rejected response to undefined`.
 
 ## License
 

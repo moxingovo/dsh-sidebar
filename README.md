@@ -5,6 +5,11 @@ front-end (no iframe) that reuses your existing dsh web service
 (127.0.0.1:3080 by default) and `~/.dsh` — no second gateway, no server changes.
 
 > Unofficial community extension. Not affiliated with DeepSeek.
+>
+> **Harness compatibility**: 0.6.0 speaks the **0.1.6** wire (Typert API Gateway:
+> cookie-authenticated `/api/<ns>/<method>`, one `remote.mux` WebSocket, durable
+> events plus process-local assistant frames). For DeepSeek Harness **0.1.0–0.1.5**
+> use release **0.5.0**; the two wires are not interchangeable.
 
 - **Entry points (same as Claude Code)**: the **DeepSeek Harness icon** (DeepSeek
   blue) in the top-right auxiliary bar — click to summon the chat panel; the
@@ -15,15 +20,17 @@ front-end (no iframe) that reuses your existing dsh web service
   blank-session-only (locked once the conversation starts — a server constraint).
 - **Capabilities**: streaming replies, stop, tool cards / approval cards / todos /
   timeline, image attachments (vision), `/compact`, Markdown + code blocks.
-- **Protocol**: `POST /api/*` RPC plus dual WebSocket downlinks (mux/host
-  frames) — see [docs/protocol.md](https://github.com/moxingovo/dsh-web-panel/blob/HEAD/docs/protocol.md).
+- **Protocol**: 0.1.6 Typert gateway — `POST /api/<ns>/<method>` with named args,
+  a browser-session cookie minted from the launch token, and one `/api/remote.mux`
+  socket carrying every stream (session follow, workspace baseline, `$events`) —
+  see [docs/protocol.md](https://github.com/moxingovo/dsh-web-panel/blob/HEAD/docs/protocol.md).
 
 ## Install
 
 From a released `.vsix`:
 
 ```
-code --install-extension dsh-webview-0.3.1.vsix
+code --install-extension dsh-webview-0.6.0.vsix
 ```
 
 Or build it yourself (run in the repo root):
@@ -31,7 +38,7 @@ Or build it yourself (run in the repo root):
 ```
 npx @vscode/vsce package
 pwsh -File test\fix-vsix.ps1   # repairs vsce's UTF-8 mangling of package.json
-code --install-extension dsh-webview-0.3.1.vsix
+code --install-extension dsh-webview-0.6.0.vsix
 ```
 
 > ⚠️ Known issue: on some Windows environments `vsce package` re-encodes the
@@ -113,7 +120,7 @@ behind the duplicate-card bug: session-log events carry the approval id as
 latter makes the id `undefined`, so the log card and the replayed frame render as
 two identical cards and `approval/decided` never settles either. It needs jsdom,
 so point `DSH_CHECKOUT_NODE_MODULES` at a checkout that has one, e.g.
-`$env:DSH_CHECKOUT_NODE_MODULES = 'C:\Users\20906\deepseek-harness\node_modules'`.
+`$env:DSH_CHECKOUT_NODE_MODULES = '<checkout>\node_modules'`.
 
 `respond-wire-verify.js` is the regression guard for the sidebar's permission
 buttons: it stands up a fake dsh gateway, activates the extension against it,

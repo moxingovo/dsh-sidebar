@@ -115,7 +115,13 @@ process.env.FAKE_ARGV_FILE = argvFile
     check('a fatal error leaves a report', flags.includes('--report-on-fatalerror'), JSON.stringify(flags))
     check('  the report directory is set', flags.some((f) => f.startsWith('--report-directory=')), JSON.stringify(flags))
     check('the system trust store is used (node >= 22.15)', flags.includes('--use-system-ca'), JSON.stringify(flags))
-    check('node options never leak into the server arguments', argv.length === 5, JSON.stringify(argv))
+    // Intent: the NODE_OPTIONS-style flags travel in execArgv, never in argv.
+    // argv is the server command line, so spawn-only flags are legitimate here
+    // (0.1.6 needs --no-open or 'dsh web' hijacks the default browser).
+    const leaked = argv.filter((a, i) => i > 1 && (a.startsWith('--max-old-space-size')
+      || a.startsWith('--report-') || a === '--use-system-ca'))
+    check('node options never leak into the server arguments', leaked.length === 0, JSON.stringify(argv))
+    check('  the spawn-only flags stay on the server line', argv.includes('--no-open'), JSON.stringify(argv))
     check('the script path comes first among positionals', String(argv[1]).endsWith('bin.js'), String(argv[1]))
     check('the web command line survives', argv.slice(2, 4).join(' ') === 'web --port', argv.slice(2, 4).join(' '))
     check('  on the configured port', Number(argv[4]) === config.port, String(argv[4]))

@@ -110,13 +110,20 @@
     if (sbToggle) sbToggle.addEventListener('click', () => closeSessionBar())
     bindHeader()
     bindComposer()
-    // 面板每 2 秒静默同步一次服务端模型状态(selectModel 无推送帧,只能短轮询)
-    setInterval(() => { if (S.openId) post({ type: 'refreshModels', sessionId: S.openId }) }, 2000)
+    // 模型目录不再轮询:0.1.6 会在 model/selection 事件与 modelSelection 投影里
+    // 推送当前选择,2 秒一次的刷新只会在用户点菜单时重建标题栏、吞掉点击。
+    // 目录本身仍会在打开会话时、以及点模型/推理药丸时按需刷新。
   }
 
   // ── harness 风格药丸菜单(替代原生 select 下拉) ──────────────────────────
   let menuEl = null
+  let menuClose = null
   function closePillMenu() {
+    // The document listener must go with the menu. Leaving it behind made every
+    // later pick fail: the stale handler still held the REMOVED menu, so
+    // menu.contains(target) was false for a click inside the NEW menu and it
+    // closed that one on pointerdown — before its item ever got the click.
+    if (menuClose) { document.removeEventListener('pointerdown', menuClose); menuClose = null }
     if (menuEl) { menuEl.remove(); menuEl = null }
   }
   function pillMenu(anchor, items, onPick) {
@@ -139,12 +146,17 @@
     menu.style.top = Math.min(r.bottom + 3, window.innerHeight - menu.scrollHeight - 8) + 'px'
     menuEl = menu
     const close = (e) => {
-      if (!menu.contains(e.target) && e.target !== anchor) {
-        closePillMenu()
-        document.removeEventListener('pointerdown', close)
-      }
+      // A newer menu owns the shared state; a stale handler must never touch it.
+      if (menuEl !== menu) return
+      if (!menu.contains(e.target) && e.target !== anchor) closePillMenu()
     }
-    setTimeout(() => document.addEventListener('pointerdown', close), 0)
+    menuClose = close
+    // Attach synchronously. There is no click left to swallow — the menu is built
+    // inside the pill's own click handler — while a deferred attach raced the menu
+    // lifecycle: a pending timeout re-added the listener after the menu had been
+    // closed, so every interaction leaked one document handler (and the stale ones
+    // closed the NEXT menu on pointerdown, which is why the second pick did nothing).
+    document.addEventListener('pointerdown', close)
     return menu
   }
   function permCurrentLabel() {
@@ -682,7 +694,12 @@
       const row = el('div', 'sb-row' + (it.sessionId === S.openId ? ' active' : ''))
       row.title = (it.cwd || '') + ' · ' + it.sessionId
       const projTitle = it.projections && it.projections.values && it.projections.values.title
-      const title = it.sessionId === S.openId && S.open && S.open.title ? S.open.title : (projTitle || it.title || it.name)
+      // it.title is only written from a fresh rename/title event, while the
+      // projection is a cache as of the last session/list — preferring the cache
+      // left a renamed conversation showing its old name.
+      const title = it.sessionId === S.openId && S.open && S.open.title
+        ? S.open.title
+        : (it.title || projTitle || it.name)
       const head = el('div', 'sb-titleline')
       const name = el('span', 'sb-name', title || '新会话' + (it.blank ? '' : ' (无标题)'))
       head.appendChild(name)
@@ -864,6 +881,9 @@
         S.open.stream = { turn: d.turn, assistant: null, blocks: new Map(), tools: new Map(), lastStep: 0 }
         break
       case 'turn/end':
+        // A generated title lands around the end of the first turn; re-list once so
+        // the drawer matches the harness instead of waiting for the next boot.
+        post({ type: 'listSessions' })
         S.open.busy = false
         if (S.open.stream && S.open.stream.assistant) finalizeStreamingAssistant(S.open.stream.assistant)
         S.open.stream = null
@@ -872,11 +892,23 @@
         if (S.open.stream) S.open.stream.lastStep = d.step
         break
       case 'user/message': {
-        const parts = partsOf(d.message && d.message.content)
+        // 0.1.6 puts the parts at data.content; the older wire nested them under
+        // data.message.content. Reading only the nested form meant a user's own
+        // turns never rendered — neither live nor from history.
+        const parts = partsOf(d.content || (d.message && d.message.content))
         if (!parts.length) break // 空内容帧不渲染(服务端可能回放空帧)
         // 斜杠命令不渲染为消息:切换类操作(如 /plan)应表现为直接切换,
         // 其反馈由 plan/mode 徽标与命令结果行提供(harness 亦以命令芯片呈现)
         if (parts.length === 1 && parts[0].type === 'text' && /^\/\S/.test(String(parts[0].text || ''))) break
+        // Plugin-injected context (tmux snapshots, the user-approval policy notice)
+        // also arrives as a user/message, with source.kind 'plugin'. Rendering it in
+        // a user bubble told the panel the user had typed things they never wrote.
+        const source = d.source || (d.message && d.message.source) || null
+        if (source && source.kind === 'plugin') {
+          const text = parts.map((p) => (p.type === 'text' ? p.text : '[图片]')).join(' ').trim()
+          rows.push({ kind: 'system', text: '已注入上下文(' + (source.plugin || 'plugin') + '):' + text, ts: ev.time })
+          break
+        }
         rows.push({ kind: 'user', parts, ts: ev.time })
         break
       }
@@ -924,8 +956,11 @@
         }
         break
       }
+      // 0.1.6 names the code-mode dispatch pair tool/ptc-dispatch*.
       case 'tool/code-dispatch-start':
-      case 'tool/code-dispatch': {
+      case 'tool/code-dispatch':
+      case 'tool/ptc-dispatch-start':
+      case 'tool/ptc-dispatch': {
         const callId = d.rootCallId || d.parentCallId
         const row = findToolRow(rows, callId)
         if (row) {
@@ -976,9 +1011,44 @@
       case 'compaction/start':
         rows.push({ kind: 'system', text: '开始压缩会话…', ts: ev.time })
         break
-      case 'session/title':
-        if (S.open) { S.open.title = d.title || null }
+      case 'session/title': {
+        const title = d.title || null
+        if (S.open) S.open.title = title
+        // The same event renames the row in the drawer; the list is otherwise only
+        // as fresh as the last session/list, so a generated title never showed up.
+        const row = S.sessions.find((s) => s.sessionId === S.openId)
+        if (row && title) {
+          row.title = title
+          renderSessionList()
+        }
         break
+      }
+      case 'permission/preset': {
+        // 0.1.6 切权限只追加这个事件,permissions 投影不再推送 —— 不折叠它,
+        // 面板上的"权限:xxx"会一直停在打开会话时的旧值。
+        const preset = d.preset || d.value
+        if (S.open && preset) {
+          S.open.permissions = { ...(S.open.permissions || {}), currentValue: preset }
+          renderHeaderSelects()
+        }
+        break
+      }
+      case 'sandbox/mode': {
+        const mode = d.mode || d.sandbox
+        if (S.open && mode) {
+          S.open.sandboxMode = mode
+          renderHeaderSelects()
+        }
+        break
+      }
+      case 'model/selection': {
+        if (S.open && d.model) {
+          S.open.models = S.open.models || {}
+          S.open.models.current = { provider: d.provider, model: d.model, reasoningEffort: d.reasoningEffort }
+          renderHeaderSelects()
+        }
+        break
+      }
       case 'plan/mode':
         rows.push({ kind: 'system', text: '计划模式: ' + (d.active ? '已开启' : '已关闭'), ts: ev.time })
         break
@@ -1390,6 +1460,30 @@
       applyLive(frame.event, frame.view)
       return
     }
+    // 0.1.6 moved the live assistant deltas out of the durable log: they arrive
+    // as process-local frames on session/follow ({type:'chunk',index,chunk}).
+    // Fold them through the same path the old assistant/chunk event used, so the
+    // streaming text keeps rendering while the turn runs; the committed
+    // assistant/message event still replaces the streaming row at the end.
+    if (frame.type === 'session/assistant-stream' && frame.sessionId === S.openId) {
+      const af = frame.frame || {}
+      if (af.type === 'chunk' && af.chunk) {
+        // 0.1.6 numbers chunk frames with a dense per-attempt cursor (frame.index)
+        // while the chunk's own index is the repeating BLOCK index. Dedup on the
+        // frame cursor: replayed frames otherwise append the same text twice.
+        const st = S.open ? S.open.stream : null
+        if (st) {
+          if (af.attemptId && st.attemptId && af.attemptId !== st.attemptId) st.chunkIndex = -1
+          if (af.attemptId) st.attemptId = af.attemptId
+          if (typeof af.index === 'number') {
+            if (af.index <= (st.chunkIndex ?? -1)) return
+            st.chunkIndex = af.index
+          }
+        }
+        foldChunk({ chunk: af.chunk }, S.open ? S.open.rows : [])
+      }
+      return
+    }
     if (frame.type === 'session/projection' && frame.sessionId === S.openId) applyProjection(frame)
     if (frame.type === 'approval/requested' && frame.sessionId === S.openId) applyApprovalRequest(frame)
     if (frame.type === 'approval/resolved' && frame.sessionId === S.openId) applyApprovalResolved(frame)
@@ -1402,8 +1496,27 @@
         post({ type: 'openSession', sessionId: S.openId })
       }
     }
-    if (frame.type === 'host/session-status' && frame.sessionId === S.openId) {
-      if (S.open) { S.open.busy = frame.running; renderSendState() }
+    if (frame.type === 'host/session-status') {
+      // 0.1.6 pushes this as the remote event api-session/status(sessionId, running).
+      const row = S.sessions.find((s) => s.sessionId === frame.sessionId)
+      if (row && row.running !== frame.running) {
+        row.running = frame.running
+        renderSessionList()
+      }
+      if (frame.sessionId === S.openId && S.open) {
+        S.open.busy = frame.running
+        renderSendState()
+      }
+    }
+    if (frame.type === 'host/session-activity') {
+      // api-session/activity(sessionId, updatedAt): keeps the drawer's ordering
+      // honest without paying for a full session/list on every message.
+      const row = S.sessions.find((s) => s.sessionId === frame.sessionId)
+      if (row && typeof frame.updatedAt === 'number') {
+        row.updatedAt = frame.updatedAt
+        S.sessions.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
+        renderSessionList()
+      }
     }
     if (frame.type === 'host/session-added' || frame.type === 'host/workspace-changed' || frame.type === 'host/archived-sessions-changed') {
       post({ type: 'listSessions' })
@@ -1451,6 +1564,17 @@
       renderSessionList()
     }
     if (frame.key === 'permissions') { o.permissions = frame.value; renderHeaderSelects() }
+    if (frame.key === 'inbox') { o.queue = inboxToQueue(frame.value); renderQueue() }
+    if (frame.key === 'modelSelection') {
+      // 0.1.6 shape: {lastUsed, next}; next is what the following request uses.
+      const v = frame.value || {}
+      const sel = v.next || v.lastUsed
+      if (sel) {
+        o.models = o.models || {}
+        o.models.current = { provider: sel.provider, model: sel.model, reasoningEffort: sel.reasoningEffort }
+        renderHeaderSelects()
+      }
+    }
     if (frame.key === 'imageLimits') { o.imageLimits = frame.value }
   }
 
@@ -1580,6 +1704,26 @@
       if (busy) input.setAttribute('placeholder', '运行中:Enter 插入对话,点击 ■ 停止')
       else input.setAttribute('placeholder', '输入消息,Enter 发送,Shift+Enter 换行')
     }
+  }
+
+  /**
+   * 0.1.6 keeps the pending messages in the `inbox` projection grouped by the
+   * delivery point: next-turn (queued after the turn) and next-step (steered into
+   * the running step). The old wire sent a flat session/queue frame instead.
+   */
+  function inboxToQueue(inbox) {
+    if (!inbox || typeof inbox !== 'object') return []
+    const out = []
+    for (const key of ['next-turn', 'next-step']) {
+      for (const item of inbox[key] || []) {
+        if (!item || typeof item !== 'object') continue
+        out.push({
+          placement: item.placement || (key === 'next-step' ? 'steer' : 'queue'),
+          message: item.message || item,
+        })
+      }
+    }
+    return out
   }
 
   function renderQueue() {

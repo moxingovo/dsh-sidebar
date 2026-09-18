@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.6.0
+
+(2026-09-19) 跟进 **DeepSeek Harness 0.1.6-alpha.2(Typert API Gateway)**:旧版 wire 在 0.1.6 上完全不可用(探测、鉴权、API、事件流全变),本版把协议层重写并补齐功能缺口。回归脚本 `test/*.js` 共 9 个套件 129 项断言全绿。
+
+### 协议层(0.1.6 wire)
+- 重写 `src/protocol.js`:`POST /api/<ns>/<method>` 命名参数网关、`session/list` 的 `_request` 参数、WS 单路 `remote.mux` 的逻辑流(`open`/`cancel`,帧为 `item`/`error`/`end`)。
+- 鉴权:0.1.6 的 `/api` 与 WS 升级都要求 `dsh-auth-<authority>` cookie。扩展改为**先换 cookie 再开 socket**(此前先开 socket,首次连接必然 401,面板要重开一次才活);token 候选全量尝试(按文件 mtime 新→旧、同文件内后出现优先),cookie 存 globalState 复用。
+- 传输层改用 `node:http`(扩展宿主里的 `fetch` 换 token 被服务端 401,同进程 `http.get` 却是 303),整个扩展不再依赖 `fetch`。
+- 新增映射:`session.prompt`(客户端铸 `requestId`)、`commands.execute`(0.1.6 把 `attachments` 改名为 `submittedAttachments`)、`permissionPresets/catalog`、`session/modelCatalog`(目录里当前模型叫 `default`,归一化成 `current`)。
+
+### 实时事件
+- 打通 `$events` host 流:`api-session/status`(运行中小圆点)、`api-session/added`/`removed`、`api-session/activity`(列表排序);过去这些 `emit` 帧被当成 waterfall 处理,事件被丢弃。
+- 修复 connection 状态:host 流从未上报 up,面板 `connected = muxUp && hostUp` 恒为假 —— 黄色"正在连接"永不消失。
+- 流式打字:0.1.6 把增量移到进程内帧 `session/assistant-stream`;按**帧游标**去重(chunk 自带的是会重复的块号)。
+- 问答卡片:0.1.6 的事件名是 `user-questions/request`(旧名 `question/request` 导致提问卡永不显示)。
+- 权限药丸:0.1.6 的 `permissions` 投影只有 `currentValue`,选项在 `permissionPresets/catalog`;切换只追加 `permission/preset` 事件,现已在 webview 里折叠。
+- 队列面板改由 `inbox` 投影驱动;抽屉标题改为"显式 title 优先 + `session/title` 事件更新 + 回合结束重拉"。
+
+### 界面缺陷
+- 修复药丸菜单**第二次点不动**:关闭监听用 `setTimeout` 挂载且不摘除,陈旧监听会关掉新菜单;改为同步挂载 + 身份守卫,并加入监听器计数回归。
+- 修复**用户自己的消息不显示**:0.1.6 把 parts 放在 `data.content`(旧版在 `data.message.content`)。
+- 插件注入的上下文(如 `user-approval` 的审批策略通知)不再冒充用户气泡,改为系统行。
+- 去掉每 2 秒轮询模型目录(它会重建标题栏、吞掉点击);模型/推理药丸改为按需刷新 + `modelSelection` 投影驱动。
+- 代码模式子调用行:事件名 `tool/code-dispatch*` → `tool/ptc-dispatch*`。
+
+### 测试
+- 新增 `test/mock-016-server.js`:会说 0.1.6 wire 的 mock(cookie 握手、命名参数网关、`remote.mux` WS 握手 + 帧编解码、workspace/`$events`/session-follow 订阅)。两个旧套件(`respond-wire`、`session-list-filter`)从旧 wire 迁到它之上,并把审批/问答的应答断言改为 `POST /api/$events/result`。
+- 新增 `test/live-sync-verify.js`(jsdom 实时折叠路径)、`test/pill-menu-verify.js`(菜单生命周期与监听器泄漏)。
+
 ## 0.5.0
 
 (2026-09-18) 以 **0.3.5 稳定线**为基线,修掉会话列表 / 附件 / 服务自启的实质缺陷。回归脚本 `test/*.js` 共 103 项断言全绿。

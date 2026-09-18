@@ -71,8 +71,15 @@ setTimeout(() => {
 setTimeout(() => {
   console.log('statusBar.text =', mockStatusBar.text)
   const launch = lines.find((l) => l.includes('launching via')) || ''
-  const flagsOk = launch.includes('--max-old-space-size=8192') && launch.includes('--report-on-fatalerror')
-  console.log('[real-launch] launch line carries the hardening flags:', flagsOk)
+  // The hardening flags belong to the checkout launcher; without DSH_CHECKOUT the
+  // chain falls back to 'dsh'/'npx', which cannot carry them. Asserting them there
+  // made the suite fail for a configuration it was never given.
+  const checkoutLauncher = launch.includes('bin.js')
+  const flagsOk = !checkoutLauncher
+    || (launch.includes('--max-old-space-size=8192') && launch.includes('--report-on-fatalerror'))
+  console.log('[real-launch] launch line:', launch.slice(0, 120))
+  console.log('[real-launch] checkout launcher used:', checkoutLauncher,
+    checkoutLauncher ? '-> hardening flags present: ' + flagsOk : '-> (no DSH_CHECKOUT: hardening assertion skipped)')
   const ready = mockStatusBar.text.includes('$(check)') && flagsOk
   console.log('[real-launch] extension spawned the real dsh server and reached ready:', ready)
   ext.deactivate()

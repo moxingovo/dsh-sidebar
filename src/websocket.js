@@ -1,18 +1,30 @@
 'use strict'
-// Minimal RFC6455 client for the dsh downlinks (extension host Node 18, no deps).
-// The dsh server (packages/client/connection) upgrades /api/events.mux and
-// /api/events.host to WebSocket and pushes JSON text frames (server-request
-// envelopes). Downlink = read-only; we answer pings and close politely.
+// Minimal RFC6455 client for the dsh downlinks (extension host Node, no deps).
+// 0.1.6 upgrades /api/remote.mux to WebSocket: the client OPENS logical streams
+// on it ({"type":"open",streamId,endpoint,payload}) and reads {"type":"item"} /
+// "error" / "end" messages back. The handshake must carry the browser-session
+// cookie, so headers are injectable. We answer pings and close politely.
 const http = require('node:http')
 const crypto = require('node:crypto')
 
 class SimpleWebSocket {
-  constructor(url) {
+  /**
+   * @param url - ws:// URL of the downlink.
+   * @param options.headers - extra handshake headers; the mux socket carries the
+   *   browser-session cookie here (0.1.6 authenticates /api, upgrades included).
+   */
+  constructor(url, options = {}) {
     this.url = url
+    this.headers = options.headers || {}
     this.socket = null
     this.buffer = Buffer.alloc(0)
     this.closed = false
     this.cb = {}
+  }
+
+  /** Send one text frame (the mux protocol's open/cancel messages). */
+  send(text) {
+    this._sendFrame(0x1, Buffer.from(String(text), 'utf8'))
   }
   open(callbacks) {
     this.cb = callbacks || {}
@@ -28,7 +40,8 @@ class SimpleWebSocket {
         Upgrade: 'websocket',
         'Sec-WebSocket-Key': key,
         'Sec-WebSocket-Version': '13',
-        'User-Agent': 'dsh-webview/0.3.0',
+        'User-Agent': 'dsh-webview/0.4.0',
+        ...this.headers,
       },
     })
     this.req = req

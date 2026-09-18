@@ -46,6 +46,11 @@ jobs:
           node test/launch-flags-verify.js
           node test/approval-card-verify.js
           node test/attach-paste-verify.js
+          node test/live-sync-verify.js
+          node test/pill-menu-verify.js
+          node test/spawn-verify.js
+          # real-launch-verify.js needs a local DSH checkout (DSH_CHECKOUT) and is
+          # therefore a manual test, not a CI gate.
 
       - name: Install vsce
         run: npm install --global @vscode/vsce

@@ -73,7 +73,13 @@ function probe(port, timeoutMs = 4000) {
     const req = http.get({ host: '127.0.0.1', port, path: '/', timeout: timeoutMs }, (res) => {
       let body = ''
       res.on('data', (c) => { body += c; if (body.length > 300000) { res.destroy(); resolve(false) } })
-      res.on('end', () => resolve(res.statusCode < 400 && body.includes('__DSH_BOOT__')))
+      // 0.1.6 authenticates the shell: without the session cookie GET / answers
+      // 401 "unauthorized". That is a LIVE server, and treating it as absent
+      // made the extension spawn a second one on top of the launcher's.
+      res.on('end', () => {
+        if (res.statusCode === 401) return resolve(true)
+        resolve(res.statusCode < 400 && body.includes('__DSH_BOOT__'))
+      })
       res.on('error', () => resolve(false))
     })
     req.on('timeout', () => { req.destroy(); resolve(false) })
@@ -147,6 +153,7 @@ class ServerManager {
     this.expectExit = false
     this.crashes = []
     this.downSince = 0
+    this.spawnToken = null
   }
 
   get url() { return urlOf(this.port) }
@@ -201,7 +208,8 @@ class ServerManager {
       throw this.fail('no dsh server on port ' + this.port + ' and dshWeb.spawnIfMissing is off — start dsh web yourself or enable the setting.')
     }
     this.cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? os.homedir()
-    const args = ['web', '--port', String(this.port), ...(cfg().extraArgs ?? [])]
+    // --no-open: 0.1.6 opens the default browser on start unless told not to.
+    const args = ['web', '--port', String(this.port), '--no-open', ...(cfg().extraArgs ?? [])]
     const plans = []
     if (cfg().command) {
       plans.push({
@@ -256,7 +264,15 @@ class ServerManager {
         continue
       }
       this.child = child
-      child.stdout.on('data', (d) => output.append(String(d)))
+      child.stdout.on('data', (d) => {
+        const text = String(d)
+        output.append(text)
+        const token = tokenFromOutput(text, this.port)
+        if (token && token !== this.spawnToken) {
+          this.spawnToken = token
+          output.appendLine('[dsh] captured the launch token this server printed')
+        }
+      })
       child.stderr.on('data', (d) => output.append(String(d)))
       let settled = false
       child.on('error', (err) => {
@@ -458,7 +474,10 @@ class PanelBridge {
     this.port = manager.port
     this.send({ type: 'hello', port: this.port, version: '0.4.2' })
     this.send({ type: 'workspace', path: firstWorkspacePath() })
-    this.connect()
+    // Waiting matters: describe before the cookie exists is a guaranteed 401.
+    // A client already installed by the serverState handler stays as it is —
+    // reconnecting here used to open (and immediately discard) a second socket.
+    if (!this.client) await this.connect()
     await this.pushDescribe()
   }
 
@@ -467,7 +486,20 @@ class PanelBridge {
     const log = (a, b, c) => output.appendLine('[dsh] ' + String(a) + (b !== undefined ? ' ' + String(b) : '') + (c !== undefined ? ' ' + String(c) : ''))
     const client = new DshClient({ baseUrl: urlOf(this.port), log })
     this.client = client
-    client.on('mux', (frame) => this.sendFrame('mux', frame))
+    const stored = context.globalState.get('dshWeb.cookie')
+    if (typeof stored === 'string' && stored.length > 0) client.setCookie(stored)
+    this.authenticate(client).catch((e) => output.appendLine('[dsh] auth: ' + e.message))
+    client.on('mux', (frame) => {
+      // The permissions projection carries the selection only; the menu needs
+      // the catalog, so enrich that one frame before it reaches the webview.
+      if (frame && frame.type === 'session/projection' && frame.key === 'permissions') {
+        this.withPermissionOptions(frame.value)
+          .then((value) => this.sendFrame('mux', { ...frame, value }))
+          .catch(() => this.sendFrame('mux', frame))
+        return
+      }
+      this.sendFrame('mux', frame)
+    })
     client.on('host', (frame) => this.sendFrame('host', frame))
     client.on('up', (info) => {
       if (info.stream === 'mux') this.muxUp = true
@@ -480,9 +512,101 @@ class PanelBridge {
       this.updateState()
     })
     output.appendLine('[dsh] protocol client on ' + urlOf(this.port))
-    client.open()
-    // 主动首次拉取:避免 webview 的 listSessions 早于客户端连接而丢失
-    setTimeout(() => { this.pushDescribe().catch(() => {}); this.listSessions({}).catch(() => {}) }, 1200)
+    // Authenticate BEFORE opening the socket. 0.1.6 answers 401 to /api and to
+    // the mux upgrade until the browser-session cookie exists, so opening first
+    // made the first connect after a cookie-less start look dead: the upgrade
+    // was rejected, describe/session.list failed, and the panel stayed empty
+    // until the next reconnect.
+    this.authed = this.authenticate(client)
+      .catch((e) => output.appendLine('[dsh] auth: ' + (e && e.message)))
+    this.authed.then(() => {
+        if (this.client !== client) return
+        client.open()
+        // 主动首次拉取:避免 webview 的 listSessions 早于客户端连接而丢失
+        setTimeout(() => {
+          if (this.client !== client) return
+          this.pushDescribe().catch(() => {})
+          this.listSessions({}).catch(() => {})
+        }, 600)
+      })
+    return this.authed
+  }
+
+  /**
+   * Acquire the browser-session cookie 0.1.6 requires on /api.
+   *
+   * A stored cookie is tried first (its HMAC secret is persisted server-side, so
+   * it survives restarts). Otherwise the per-process launch token — printed by
+   * `dsh web` as http://127.0.0.1:<port>/?token=… and captured either by the
+   * launcher's log or by our own spawned stdout — is exchanged for a cookie.
+   */
+  async authenticate(client) {
+    const stored = context.globalState.get('dshWeb.cookie')
+    if (typeof stored === 'string' && stored.length > 0) {
+      try {
+        await client.call('settings/describe', {})
+        output.appendLine('[dsh] auth: stored cookie accepted')
+        return true
+      } catch (e) {
+        output.appendLine('[dsh] auth: stored cookie rejected (' + e.message + '), re-authenticating')
+      }
+    }
+    const candidates = launchTokenCandidates(
+      this.port,
+      this.spawnToken ? { token: this.spawnToken, source: 'spawned stdout' } : null,
+    )
+    if (candidates.length === 0) {
+      output.appendLine('[dsh] auth: no launch token for :' + this.port
+        + ' — open the ?token= URL once, or let the extension start the server')
+      return false
+    }
+    const failures = []
+    for (const candidate of candidates) {
+      try {
+        await client.authenticate(candidate.token)
+        await context.globalState.update('dshWeb.cookie', client.cookie)
+        output.appendLine('[dsh] auth: cookie acquired from ' + candidate.source)
+        return true
+      } catch (e) {
+        failures.push(candidate.source + ': ' + e.message)
+      }
+    }
+    output.appendLine('[dsh] auth: all ' + failures.length + ' launch token(s) rejected — is :' + this.port + ' the process that printed them?')
+    for (const line of failures.slice(0, 8)) output.appendLine('[dsh]   ' + line)
+    return false
+  }
+
+  /**
+   * Permission preset choices, fetched once per connection.
+   *
+   * 0.1.6 pushes the session projection as `{currentValue}` only — the options
+   * live in the unary `permissionPresets/catalog`. Without this the pill shows
+   * "权限预设不可用" and every click is a no-op.
+   */
+  permissionOptions() {
+    if (this.permissionOptionsCache) return Promise.resolve(this.permissionOptionsCache)
+    if (this.permissionOptionsPending) return this.permissionOptionsPending
+    this.permissionOptionsPending = this.rpc('permissionPreset.catalog', {})
+      .then((value) => {
+        const options = Array.isArray(value && value.options) ? value.options : []
+        if (options.length) this.permissionOptionsCache = options
+        this.permissionOptionsPending = null
+        return options
+      })
+      .catch((e) => {
+        this.permissionOptionsPending = null
+        output.appendLine('[dsh] permissionPresets/catalog failed: ' + (e && e.message))
+        return []
+      })
+    return this.permissionOptionsPending
+  }
+
+  /** Merge the catalog into a `permissions` projection value. */
+  async withPermissionOptions(value) {
+    if (!value || typeof value !== 'object') return value
+    if (Array.isArray(value.options) && value.options.length) return value
+    const options = await this.permissionOptions()
+    return options.length ? { ...value, options } : value
   }
 
   sendFrame(kind, frame) {
@@ -510,7 +634,9 @@ class PanelBridge {
       this.send({ type: 'serverState', state: mgr.state, label: mgr.label, port: mgr.port, error: mgr.err })
       if (mgr.state === 'ready' || mgr.state === 'attached') {
         this.port = mgr.port
-        if (!this.client) { this.connect(); this.pushDescribe().catch(() => {}) }
+        // describe must wait for the cookie: a call that beats the exchange is
+        // a guaranteed 401 and left the panel showing "not connected".
+        if (!this.client) this.connect().then(() => this.pushDescribe()).catch(() => {})
       } else if (mgr.state === 'idle' || mgr.state === 'error') {
         this.disconnect()
       }
@@ -613,6 +739,16 @@ class PanelBridge {
         this.rpc('agentPreset.list', {}).catch(() => ({ presets: [], authorable: false })),
       ])
       const blank = !(history.events || []).some((e) => e.event.type === 'turn/start')
+      const projections = history.projections || null
+      if (projections && projections.values) {
+        if (projections.values.permissions) {
+          projections.values.permissions = await this.withPermissionOptions(projections.values.permissions)
+        }
+        // The session's own selection beats the catalog default for the pill.
+        const selection = projections.values.modelSelection
+        const selected = selection && (selection.next || selection.lastUsed)
+        if (models && selected) models.current = selected
+      }
       this.send({
         type: 'sessionOpened',
         sessionId: m.sessionId,
@@ -640,7 +776,20 @@ class PanelBridge {
 
   async sendPrompt(m) {
     try {
-      const payload = { sessionId: m.sessionId, mode: m.mode || 'queue', content: m.content || [] }
+      const content = m.content || []
+      // A prompt whose content is exactly one text block starting with "/" is a
+      // command in 0.1.6: the client executes it through the commands remote and
+      // it never reaches the model (session.prompt has no command slot any more).
+      const line = content.length === 1 && content[0] && content[0].type === 'text'
+        ? String(content[0].text || '').trim()
+        : ''
+      if (line.startsWith('/') && line.length > 1) {
+        const value = await this.rpc('commands.execute', { sessionId: m.sessionId, line })
+        this.send({ type: 'promptAccepted', sessionId: m.sessionId, command: value || { kind: 'success' } })
+        this.send({ type: 'promptSent', sessionId: m.sessionId })
+        return
+      }
+      const payload = { sessionId: m.sessionId, mode: m.mode || 'queue', content }
       const value = await this.rpc('session.prompt', payload)
       this.send({ type: 'promptAccepted', sessionId: m.sessionId, command: value.command || null })
       // optimistic user echo so the composer clears instantly; the event
@@ -721,7 +870,9 @@ class PanelBridge {
       // 服务端 approvalResponsePayloadSchema 要求三件套：sessionId / approvalId / outcome。
       // 之前漏了 sessionId，即使 rpcId 对了也会被判定 bad-response（网关返回 accepted:false）。
       if (!m.sessionId) throw new Error('approvalRespond 缺少 sessionId')
-      await this.respondRpc(m.rpcId, { sessionId: m.sessionId, approvalId: m.approvalId, outcome: m.outcome })
+      // 0.1.6: the approval arrives as an `approval/request` waterfall and is
+      // answered by event correlation (clientId + eventId) via $events/result.
+      await this.client.answer(m.approvalId || m.rpcId, m.outcome)
       this.send({ type: 'approvalResponded', sessionId: m.sessionId, approvalId: m.approvalId, outcome: m.outcome })
     } catch (e) { this.error('approvalRespond', e) }
   }
@@ -731,7 +882,7 @@ class PanelBridge {
       // 服务端 questionResponsePayloadSchema 要求 { sessionId, answer: { answers } }：
       // answers 必须包在 answer 里，且同样需要 sessionId。
       if (!m.sessionId) throw new Error('questionAnswer 缺少 sessionId')
-      await this.respondRpc(m.rpcId, { sessionId: m.sessionId, answer: { answers: m.answers || [] } })
+      await this.client.answer(m.rpcId, { answers: m.answers || [] })
       this.send({ type: 'questionAnswered', sessionId: m.sessionId, questionRpcId: m.rpcId })
     } catch (e) { this.error('questionAnswer', e) }
   }
@@ -782,6 +933,77 @@ class PanelBridge {
     this.alive = false
     this.disconnect()
   }
+}
+
+/** Regex for the launch URL one port's server prints on stdout. */
+function tokenPattern(port, flags) {
+  try {
+    return new RegExp('http://127\\.0\\.0\\.1:' + port + '/\\?token=([A-Za-z0-9_-]{20,})', flags || '')
+  } catch {
+    return null
+  }
+}
+
+/** Extract the first launch token of `port` from a chunk of server stdout. */
+function tokenFromOutput(text, port) {
+  const pattern = tokenPattern(port)
+  if (!pattern) return null
+  const match = pattern.exec(text)
+  return match ? match[1] : null
+}
+
+function mtimeOf(file) {
+  try { return fs.statSync(file).mtimeMs } catch { return 0 }
+}
+
+/**
+ * Every launch-token candidate for one port, newest source first.
+ *
+ * `dsh web` prints `http://127.0.0.1:<port>/?token=<43 base64url>`; both the
+ * managed launcher (DSH_HOME/logs/server-<stamp>.log) and a manual launch
+ * (DSH_HOME/web*.log) capture that stdout. Exhaustive rather than
+ * first-match, because a stale token answers 401 and looks exactly like "the
+ * server is gone": several `web*.log` files coexist (a dead
+ * `web-016-err.log` sorts before the live `web-016.log` in readdir order) and
+ * one file can span several restarts.
+ *
+ * @param port - DSH web port whose token is wanted.
+ * @param extra - optional callers-known candidate ({token, source}) to try first.
+ * @returns ranked `{token, source}` pairs, deduplicated.
+ */
+function launchTokenCandidates(port, extra) {
+  const dir = homeDsh()
+  const files = []
+  try {
+    const logs = path.join(dir, 'logs')
+    if (fs.existsSync(logs)) {
+      for (const name of fs.readdirSync(logs).filter((n) => n.startsWith('server-')).sort().reverse()) files.push(path.join(logs, name))
+    }
+  } catch {}
+  try {
+    const found = fs.readdirSync(dir).filter((n) => /^web.*\.log$/i.test(n)).map((n) => path.join(dir, n))
+    found.sort((a, b) => mtimeOf(b) - mtimeOf(a))
+    files.push(...found)
+  } catch {}
+  const pattern = tokenPattern(port, 'g')
+  const out = []
+  const seen = new Set()
+  if (extra && extra.token) { seen.add(extra.token); out.push(extra) }
+  if (pattern) {
+    for (const file of files) {
+      let text = ''
+      try { text = fs.readFileSync(file, 'utf8') } catch { continue }
+      const hits = [...text.matchAll(pattern)]
+      // Last occurrence first: a log that spans restarts ends with the live token.
+      for (let i = hits.length - 1; i >= 0; i--) {
+        const token = hits[i][1]
+        if (seen.has(token)) continue
+        seen.add(token)
+        out.push({ token, source: path.basename(file) })
+      }
+    }
+  }
+  return out
 }
 
 function firstWorkspacePath() {

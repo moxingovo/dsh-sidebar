@@ -105,7 +105,7 @@
       '<aside class="dsh-settings" hidden></aside>'
     app.appendChild(root)
     const sbToggle = $('.sb-toggle')
-    if (sbToggle) sbToggle.addEventListener('click', () => { $('.dsh-sessionbar').hidden = true })
+    if (sbToggle) sbToggle.addEventListener('click', () => closeSessionBar())
     bindHeader()
     bindComposer()
     // 面板每 2 秒静默同步一次服务端模型状态(selectModel 无推送帧,只能短轮询)
@@ -246,7 +246,10 @@
   }
 
   function bindHeader() {
-    $('#btnSessions').addEventListener('click', () => { $('.dsh-sessionbar').hidden = !$('.dsh-sessionbar').hidden })
+    $('#btnSessions').addEventListener('click', () => {
+      const bar = sessionBar()
+      if (bar) bar.hidden = !bar.hidden
+    })
     $('#btnNewSession').addEventListener('click', () => post({ type: 'createSession', cwd: S.wsPath }))
     $('#btnSettings').addEventListener('click', () => { S.settingsOpen = !S.settingsOpen; renderSettings() })
     $('#btnCollapse').addEventListener('click', () => post({ type: 'collapse' }))
@@ -493,6 +496,19 @@
     }
   }
   // ── session list (A5 仅当前工作区 + A3 最近活动降序) ──────────────────────
+  /** The session drawer; absent only before the skeleton boots. */
+  function sessionBar() { return $('.dsh-sessionbar') }
+
+  /**
+   * Close the session drawer. Picking a conversation is a navigation act, so the
+   * drawer must not stay覆盖 the chat it just opened — it used to stay open and
+   * the user had to dismiss it by hand after every switch.
+   */
+  function closeSessionBar() {
+    const bar = sessionBar()
+    if (bar) bar.hidden = true
+  }
+
   function workspaceSessions() {
     const pathNorm = (p) => p ? String(p).replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase() : p
     const ws = pathNorm(S.wsPath)
@@ -535,6 +551,10 @@
       if (it.messages) sub.appendChild(count)
       row.appendChild(sub)
       row.addEventListener('click', () => {
+        // Close first: the drawer is a switcher, and leaving it open hides the
+        // conversation the click just opened. Also closes when re-picking the
+        // active row, which otherwise looked like a dead click.
+        closeSessionBar()
         if (S.openId !== it.sessionId) post({ type: 'openSession', sessionId: it.sessionId })
       })
       row.addEventListener('contextmenu', (e) => {

@@ -70,6 +70,54 @@ if (answer) {
   check('  carries outcome', answer.outcome === 'allowed-once', String(answer.outcome))
 }
 
+
+// ── 5) the session drawer closes as soon as a conversation is picked ───────
+send({ type: 'sessionList', items: [
+  { sessionId: 'session-pick-a', cwd: 'C:\\ws', title: 'A', updatedAt: 2, messages: 3 },
+  { sessionId: 'session-pick-b', cwd: 'C:\\ws', title: 'B', updatedAt: 1, messages: 3 },
+], archivedIds: [], workspacePath: 'C:\\ws' })
+
+const bar = window.document.querySelector('.dsh-sessionbar')
+check('session drawer exists', bar !== null)
+check('drawer starts closed', bar !== null && bar.hidden === true)
+
+// The header button toggles it open — the state the user then clicks out of.
+const btnSessions = window.document.querySelector('#btnSessions')
+btnSessions.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+check('header button opens the drawer', bar !== null && bar.hidden === false)
+
+posted.length = 0
+// Locate by the row's own tooltip (cwd · sessionId): the list re-sorts by
+// updatedAt, so positional lookup would click a different session.
+const rowFor = (id) => [...window.document.querySelectorAll('.sb-row')].find(r => (r.title || '').includes(id))
+const firstRow = rowFor('session-pick-a')
+check('drawer rendered a session row', firstRow !== undefined)
+if (firstRow) firstRow.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+check('picking a conversation posts openSession', posted.some(m => m.type === 'openSession'),
+  posted.map(m => m.type).join(','))
+check('picking a conversation closes the drawer', bar !== null && bar.hidden === true)
+
+// Play the host's half of the first pick so the UI knows which session is active —
+// without this the drawer would still believe nothing is open and the guard below
+// would be testing nothing.
+send({ type: 'sessionOpened', sessionId: 'session-pick-a', hasMore: false, blank: false, events: [] })
+
+// Re-picking the already-active row is not a dead click: it still dismisses.
+btnSessions.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+posted.length = 0
+const activeRow = rowFor('session-pick-a')
+check('the active row is still rendered', activeRow !== undefined)
+if (activeRow) activeRow.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+check('re-picking the active row still closes the drawer', bar !== null && bar.hidden === true)
+// The guard under test is "never re-open what is already open": the first click on a
+// row becomes the active session, so re-picking that same row must not ask the host
+// to open it again. (The row that sorts first can be the other session here, which is
+// why this asserts on ids rather than on an empty payload.)
+const reopen = posted.filter(m => m.type === 'openSession')
+check('re-picking the active row never re-opens the active session',
+  reopen.every(m => m.sessionId !== 'session-pick-a'),
+  JSON.stringify(reopen.map(m => m.sessionId)))
+
 const failed = results.filter(r => !r.ok)
 console.log('')
 console.log(failed.length === 0 ? '[verify] ALL PASS (' + results.length + ' checks)' : '[verify] FAILED: ' + failed.map(f => f.label).join(' | '))

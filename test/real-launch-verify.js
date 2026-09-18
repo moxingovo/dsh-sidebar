@@ -9,8 +9,13 @@ const config = {
   port: 3198, attachExisting: false, spawnIfMissing: true,
   checkout: process.env.DSH_CHECKOUT ?? '', command: '',
   extraArgs: [], autoOpen: false, followWorkspace: true, stopOnExit: true,
+  // The manifest default: the launch chain must pass the same hardening the
+  // managed launcher does, whatever started the server.
+  nodeMaxOldSpaceMb: 8192, nodeArgs: [],
 }
 const commands = {}
+let viewProvider = null
+const lines = []
 const vscode = {
   workspace: {
     getConfiguration: () => ({ ...config, get: (k) => config[k] }),
@@ -19,17 +24,27 @@ const vscode = {
     onDidChangeConfiguration: () => ({ dispose() {} }),
   },
   window: {
-    createOutputChannel: () => ({ append: () => {}, appendLine: (l) => console.log('[out]', l), show() {}, dispose() {} }),
+    createOutputChannel: () => ({ append: () => {}, appendLine: (l) => { lines.push(String(l)); console.log('[out]', l) }, show() {}, dispose() {} }),
     createStatusBarItem: () => mockStatusBar,
     showErrorMessage: (m) => console.log('[err-toast]', m),
     showInformationMessage: () => {},
     createWebviewPanel: () => ({ webview: { html: '' }, iconPath: null, reveal() {}, onDidDispose() {} }),
-    registerWebviewViewProvider: () => ({ dispose() {} }),
+    registerWebviewViewProvider: (id, provider) => {
+      if (id === 'dshWebViewAux') viewProvider = provider
+      return { dispose() {} }
+    },
+    showWarningMessage: () => {},
+    registerUriHandler: () => ({ dispose() {} }),
     registerWebviewPanelSerializer: () => ({ dispose() {} }),
   },
   commands: { registerCommand: (id, h) => { commands[id] = h; return { dispose() {} } } },
-  env: { openExternal: async () => true },
-  Uri: { joinPath: (...p) => path.join(...p), parse: (s) => s },
+  env: { openExternal: async () => true, clipboard: { writeText: async () => {} } },
+  ViewBadge: class {},
+  Uri: {
+    joinPath: (...p) => { const j = path.join(...p); return { fsPath: j, path: j, toString: () => 'file:///' + j.split(path.sep).join('/') } },
+    parse: (s) => ({ fsPath: s, path: s, toString: () => s }),
+    file: (s) => ({ fsPath: s, path: s, toString: () => s }),
+  },
   StatusBarAlignment: { Left: 1 },
   ViewColumn: { One: 1 },
 }
@@ -42,11 +57,23 @@ Module._load = function (request, parent, isMain) {
 const ext = require(path.join(__dirname, '..', 'extension.js'))
 ext.activate({ subscriptions: [], extensionUri: path.join(__dirname, '..') })
 setTimeout(() => {
-  commands['dshWebPanel.open']().catch((e) => console.log('[real] open failed:', e.message))
+  // R1 moved the panel into the sidebar view, so the old "dshWebPanel.open"
+  // command is gone; resolving the view is what calls manager.ensure().
+  if (viewProvider === null) {
+    console.log('[real] view provider was never registered')
+    process.exit(1)
+  }
+  viewProvider.resolveWebviewView({
+    webview: { html: '', options: {}, postMessage() {}, onDidReceiveMessage: () => ({ dispose() {} }), asWebviewUri: (u) => u, cspSource: '' },
+    onDidDispose: () => ({ dispose() {} }), visible: true, show: () => {},
+  })
 }, 500)
 setTimeout(() => {
   console.log('statusBar.text =', mockStatusBar.text)
-  const ready = mockStatusBar.text.includes('$(check)')
+  const launch = lines.find((l) => l.includes('launching via')) || ''
+  const flagsOk = launch.includes('--max-old-space-size=8192') && launch.includes('--report-on-fatalerror')
+  console.log('[real-launch] launch line carries the hardening flags:', flagsOk)
+  const ready = mockStatusBar.text.includes('$(check)') && flagsOk
   console.log('[real-launch] extension spawned the real dsh server and reached ready:', ready)
   ext.deactivate()
   process.exit(ready ? 0 : 1)

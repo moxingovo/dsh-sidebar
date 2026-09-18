@@ -64,7 +64,11 @@ function findNode() {
 
 // Probe the port: any HTTP listener answering JSON on /api counts (the dsh
 // service root it; keep the old __DSH_BOOT__ check as a secondary signal).
-function probe(port, timeoutMs = 1500) {
+//
+// The timeout is deliberately generous: the server's own stall-watch logs
+// multi-second event-loop stalls under load, and a 1.5s budget turned a busy
+// server into an apparently dead one.
+function probe(port, timeoutMs = 4000) {
   return new Promise((resolve) => {
     const req = http.get({ host: '127.0.0.1', port, path: '/', timeout: timeoutMs }, (res) => {
       let body = ''
@@ -77,6 +81,60 @@ function probe(port, timeoutMs = 1500) {
   })
 }
 
+/**
+ * Confirm the port is really down, not merely busy. One missed probe is not
+ * evidence — it is what made the extension declare an attached server dead,
+ * spawn a local instance on top of it, and keep that instance even after the
+ * managed launcher had already started a properly configured replacement.
+ */
+async function probeDead(port, attempts = 3, gapMs = 2000) {
+  for (let i = 0; i < attempts; i++) {
+    if (await probe(port)) return false
+    if (i < attempts - 1) await sleep(gapMs)
+  }
+  return true
+}
+
+/**
+ * Node flags for the checkout launcher. The managed launcher
+ * (~/.dsh/run-server.cmd) passes the same set, and that is the point: whichever
+ * program wins the port must start the server the same way. Without the heap
+ * ceiling a large session serialization takes V8 down with a silent
+ * exit 0xC0000409 instead of failing one request; without the report flags that
+ * death leaves no evidence; and without the system CA the trust-store tools
+ * fail behind a TLS-inspecting proxy.
+ */
+const DEFAULT_MAX_OLD_SPACE_MB = 8192
+
+function nodeFlags() {
+  const flags = []
+  const configured = cfg().nodeMaxOldSpaceMb
+  const mb = Number(configured === undefined || configured === null ? DEFAULT_MAX_OLD_SPACE_MB : configured)
+  if (Number.isFinite(mb) && mb > 0) flags.push('--max-old-space-size=' + Math.floor(mb))
+  const reports = path.join(homeDsh(), 'reports')
+  try { fs.mkdirSync(reports, { recursive: true }) } catch {}
+  flags.push('--report-on-fatalerror', '--report-directory=' + reports)
+  if (supportsSystemCa()) flags.push('--use-system-ca')
+  for (const extra of cfg().nodeArgs ?? []) flags.push(String(extra))
+  return flags
+}
+
+// --use-system-ca exists from Node 22.15/23.2 on; an older node exits on the
+// unknown option, so the flag is only sent to a node that understands it.
+let systemCaSupport
+function supportsSystemCa() {
+  if (systemCaSupport !== undefined) return systemCaSupport
+  systemCaSupport = false
+  try {
+    const out = require('node:child_process').execFileSync(findNode(), ['--version'], { encoding: 'utf8', timeout: 5000, windowsHide: true })
+    const [major, minor] = String(out).trim().replace(/^v/, '').split('.').map(Number)
+    systemCaSupport = major > 22 || (major === 22 && minor >= 15)
+  } catch (err) {
+    output.appendLine('[dsh] could not read the node version — leaving --use-system-ca off (' + (err && err.message) + ')')
+  }
+  return systemCaSupport
+}
+
 class ServerManager {
   constructor() {
     this.state = 'idle' // idle | starting | ready | attached | error
@@ -87,6 +145,8 @@ class ServerManager {
     this.port = cfg().port
     this.starting = null
     this.expectExit = false
+    this.crashes = []
+    this.downSince = 0
   }
 
   get url() { return urlOf(this.port) }
@@ -99,6 +159,34 @@ class ServerManager {
     try { await p } finally { this.starting = null }
   }
 
+  /**
+   * Wait for the server this port is supposed to have. "Nothing answers right
+   * now" is not "nothing will": a managed launcher needs ~20s to boot a
+   * replacement after a restart. Spawning into that window is what let the
+   * extension steal the port from the launcher and keep it.
+   */
+  async awaitExisting() {
+    const budget = Math.max(0, Number(cfg().attachWaitSeconds ?? 30)) * 1000
+    const deadline = Date.now() + budget
+    let announced = false
+    for (;;) {
+      if (await probe(this.port)) {
+        this.setState('attached', 'attached :' + this.port)
+        output.appendLine('[dsh] attached to existing server on :' + this.port)
+        return true
+      }
+      if (Date.now() >= deadline) {
+        if (announced) output.appendLine('[dsh] still nothing on :' + this.port + ' after ' + Math.round(budget / 1000) + 's')
+        return false
+      }
+      if (!announced) {
+        announced = true
+        output.appendLine('[dsh] nothing on :' + this.port + ' yet — waiting up to ' + Math.round(budget / 1000) + 's for a launcher before starting our own')
+      }
+      await sleep(1000)
+    }
+  }
+
   // B1: spawn 强制 DSH_HOME=~/.dsh(与 attachExisting 完全一致,绝不隔离)
   spawnEnv() {
     return { ...process.env, DSH_HOME: homeDsh() }
@@ -108,11 +196,7 @@ class ServerManager {
     this.port = cfg().port
     this.setState('starting', 'connecting…')
     output.appendLine('[dsh] probing ' + this.url)
-    if (cfg().attachExisting && await probe(this.port)) {
-      this.setState('attached', 'attached :' + this.port)
-      output.appendLine('[dsh] attached to existing server on :' + this.port)
-      return
-    }
+    if (cfg().attachExisting && await this.awaitExisting()) return
     if (!cfg().spawnIfMissing) {
       throw this.fail('no dsh server on port ' + this.port + ' and dshWeb.spawnIfMissing is off — start dsh web yourself or enable the setting.')
     }
@@ -129,9 +213,10 @@ class ServerManager {
       if (co) {
         const bin = path.join(co, 'apps', 'cli', 'lib', 'bin.js')
         if (fs.existsSync(bin)) {
+          const flags = nodeFlags()
           plans.push({
-            label: 'node ' + bin,
-            make: () => spawn(findNode(), [bin, ...args], { cwd: this.cwd, env: this.spawnEnv(), stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }),
+            label: 'node ' + flags.join(' ') + ' ' + bin,
+            make: () => spawn(findNode(), [...flags, bin, ...args], { cwd: this.cwd, env: this.spawnEnv(), stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }),
           })
         } else {
           output.appendLine('[dsh] dshWeb.checkout launcher not found (' + bin + ') — falling back to CLI detection')
@@ -190,8 +275,20 @@ class ServerManager {
         this.setState('idle', 'stopped')
         this.broadcast('serverState')
         if (!this.expectExit && !disposing && cfg().spawnIfMissing) {
-          output.appendLine('[dsh] self-started server exited — restarting in 1.5s')
-          setTimeout(() => { if (!this.child && !disposing) this.ensure().catch(() => {}) }, 1500)
+          // A silent 0xC0000409 exit is a crash, not a shutdown: restarting it
+          // every 1.5s turns one bad state into a visible crash loop. Back off,
+          // and stop after three crashes in five minutes with the code on screen.
+          const now = Date.now()
+          this.crashes = (this.crashes ?? []).filter((t) => now - t < 300000)
+          this.crashes.push(now)
+          if (this.crashes.length > 3) {
+            this.fail('自启的 dsh 服务 5 分钟内退出 ' + this.crashes.length + ' 次(最后一次 code=' + code + '),已停止自动重启。'
+              + '查看 DSH 输出通道与 ' + path.join(homeDsh(), 'reports') + ',或修好后执行 “DSH: 重启服务”。')
+            return
+          }
+          const delay = 1500 * this.crashes.length
+          output.appendLine('[dsh] self-started server exited — restarting in ' + delay + 'ms (' + this.crashes.length + '/3 crashes in 5min)')
+          setTimeout(() => { if (!this.child && !disposing) this.ensure().catch(() => {}) }, delay)
         }
       })
       const deadline = Date.now() + 120000
@@ -466,9 +563,14 @@ class PanelBridge {
       }
       // 会话列表 = VS Code 当前文件夹对应的 harness 工作区(大小写/斜杠归一化匹配)
       const ws = firstWorkspacePath()
-      const items = (ws && list.items || []).filter((s) => normPath(s.cwd) === normPath(ws))
-      const match = items.length
-      output.appendLine('[dsh] session.list total=' + (list.items || []).length + ' workspace=' + (ws || '(none)') + ' match=' + match + ' archived=' + (archivedIds === null ? '(unavailable — keeping current)' : archivedIds.length))
+      const inWorkspace = (ws && list.items || []).filter((s) => normPath(s.cwd) === normPath(ws))
+      // …再剔掉 subagent 的子会话。它们是子代理自己跑任务的会话日志,不是用户开的对话:
+      // DSH 客户端把它们挂在父会话的 subagent catalog 里,从不列进对话列表。列在这里
+      // 就是抽屉里那一堆 "你是资深…/You are doing…" 行——既点不出所以然,归档也挡不住
+      // (归档只隐藏,不删除,而它们本来就不该出现)。
+      const items = inWorkspace.filter(isConversation)
+      const subagents = inWorkspace.length - items.length
+      output.appendLine('[dsh] session.list total=' + (list.items || []).length + ' workspace=' + (ws || '(none)') + ' conversations=' + items.length + ' subagentSessions=' + subagents + ' archived=' + (archivedIds === null ? '(unavailable — keeping current)' : archivedIds.length))
       this.send({
         type: 'sessionList',
         items,
@@ -686,6 +788,20 @@ function firstWorkspacePath() {
   return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? null
 }
 
+/**
+ * Whether a session-list entry is a user conversation rather than a subagent's
+ * own working session.
+ *
+ * A subagent session is the only thing that carries `origin: 'subagent'` — the
+ * session header validator accepts no other origin value, and a fork carries
+ * `parentSessionId` WITHOUT it, so keying on parentSessionId would hide the
+ * user's own derived conversations. The DSH client files subagent sessions
+ * under their parent's catalog and never lists them as conversations.
+ */
+function isConversation(s) {
+  return s.origin !== 'subagent'
+}
+
 function normPath(p) {
   // 分隔符归一 + 去尾 + 小写,容忍 C:/ 与 C:\ 混用
   return p ? String(p).replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase() : p
@@ -699,6 +815,10 @@ function settingsSnapshot() {
     checkout: cfg().checkout,
     command: cfg().command,
     extraArgs: cfg().extraArgs ?? [],
+    attachWaitSeconds: cfg().attachWaitSeconds,
+    takeoverAfterSeconds: cfg().takeoverAfterSeconds,
+    nodeMaxOldSpaceMb: cfg().nodeMaxOldSpaceMb,
+    nodeArgs: cfg().nodeArgs ?? [],
     followWorkspace: cfg().followWorkspace,
     stopOnExit: cfg().stopOnExit,
     autoOpen: cfg().autoOpen,
@@ -818,13 +938,23 @@ function activate(ctx) {
       manager.ensure().catch((e) => output.appendLine('[dsh] health retry failed: ' + e.message))
       return
     }
-    if (manager.state !== 'attached') return
-    probe(manager.port).then((alive) => {
-      if (!alive && manager.state === 'attached') {
-        output.appendLine('[dsh] attached server stopped responding — taking over with a local instance')
-        manager.setState('idle', 'reconnecting…')
-        manager.ensure().catch((e) => vscode.window.showErrorMessage('DSH: ' + e.message))
+    if (manager.state !== 'attached') { manager.downSince = 0; return }
+    probeDead(manager.port).then((dead) => {
+      if (manager.state !== 'attached') return
+      if (!dead) { manager.downSince = 0; return }
+      if (!manager.downSince) manager.downSince = Date.now()
+      const waited = Math.round((Date.now() - manager.downSince) / 1000)
+      const budget = Math.max(0, Number(cfg().takeoverAfterSeconds ?? 45))
+      if (waited < budget) {
+        output.appendLine('[dsh] attached server is not answering (' + waited + 's of ' + budget + 's) — waiting for it to come back')
+        return
       }
+      // Only now is taking over honest: the port has been silent for the whole
+      // budget while the launcher had every chance to bring its server back.
+      output.appendLine('[dsh] attached server has not answered for ' + waited + 's — taking over with a local instance')
+      manager.downSince = 0
+      manager.setState('idle', 'reconnecting…')
+      manager.ensure().catch((e) => vscode.window.showErrorMessage('DSH: ' + e.message))
     })
   }, 15000)
   ctx.subscriptions.push({ dispose: () => clearInterval(healthTimer) })

@@ -147,6 +147,32 @@
           "default": [],
           "description": "追加到服务启动命令的额外参数(如 --trusted-host)。"
         },
+        "dshWeb.attachWaitSeconds": {
+          "type": "number",
+          "default": 30,
+          "minimum": 0,
+          "description": "端口上没有服务时,先等这么多秒再自启。给受管启动器(watchdog + run-server.cmd)留出重启窗口,避免抢端口。"
+        },
+        "dshWeb.takeoverAfterSeconds": {
+          "type": "number",
+          "default": 45,
+          "minimum": 0,
+          "description": "附着的服务连续无响应这么多秒后才接管自启。0 = 确认掉线即接管。"
+        },
+        "dshWeb.nodeMaxOldSpaceMb": {
+          "type": "number",
+          "default": 8192,
+          "minimum": 0,
+          "description": "自启 node 时的 --max-old-space-size(MB)。0 = 用 Node 默认(约 4GB);大会话序列化会以静默 0xC0000409 崩溃,故默认抬高。"
+        },
+        "dshWeb.nodeArgs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "追加给 node 可执行文件本身的参数(不是 dsh 的参数);在 checkout 启动器下生效。"
+        },
         "dshWeb.autoOpen": {
           "type": "boolean",
           "default": false,

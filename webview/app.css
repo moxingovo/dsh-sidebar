@@ -224,6 +224,8 @@ button, select, textarea { font-family: inherit; color: inherit; }
 .composer-card:focus-within { border-color: var(--dsh-accent); }
 .attach-tray { display: flex; flex-wrap: wrap; gap: 4px; padding: 6px 8px 0; }
 .attach-tray[hidden] { display: none; }
+.attach-input { display: none; }
+.dsh-composer.dropping .composer-card { border-color: var(--dsh-accent); background: var(--dsh-pill-bg); }
 .attach-chip { border: 1px solid var(--dsh-border); border-radius: 10px; font-size: 10px; padding: 1px 7px; display: flex; gap: 4px; align-items: center; }
 .chip-x { background: transparent; border: none; color: var(--dsh-dim); cursor: pointer; }
 .dsh-input {

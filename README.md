@@ -56,6 +56,10 @@ to `~/.dsh` (identical to attach — never isolated).
 | `dshWeb.checkout` | "" (auto) | Optional checkout path (launches `apps/cli/lib/bin.js`) |
 | `dshWeb.command` | "" | Full command override, e.g. `pnpm dsh` |
 | `dshWeb.extraArgs` | [] | Extra arguments, e.g. `--trusted-host` |
+| `dshWeb.attachWaitSeconds` | 30 | Seconds to wait for a launcher before starting a server of our own |
+| `dshWeb.takeoverAfterSeconds` | 45 | Seconds an attached server may stay silent before we take the port over |
+| `dshWeb.nodeMaxOldSpaceMb` | 8192 | `--max-old-space-size` for the node we launch (0 = Node's default) |
+| `dshWeb.nodeArgs` | [] | Extra flags for the node executable itself (checkout launcher) |
 | `dshWeb.followWorkspace` | true | Restart self-started server when the first folder changes |
 | `dshWeb.stopOnExit` | true | Stop a self-started server when VS Code exits |
 

@@ -185,6 +185,38 @@ if (archivedRow === undefined) {
   check('stale row injected for the guard test', rowsIn('session-arch2').length === 1)
 }
 
+// ── 8) subagent sessions are working logs, not conversations ─────────────
+// The host filters them, and the webview refuses a stale render of one: this is
+// what turned a 4-conversation drawer into 28 rows of prompts the user never
+// typed.
+send({ type: 'sessionList',
+  items: [
+    { sessionId: 'session-talk', cwd: 'C:\\ws4', title: 'a real conversation', updatedAt: 9, messages: 2 },
+    { sessionId: 'child-a', cwd: 'C:\\ws4', title: '你是资深 Node.js 工程师', updatedAt: 12, parentSessionId: 'session-talk', origin: 'subagent' },
+    { sessionId: 'child-b', cwd: 'C:\\ws4', title: 'You are doing READ-ONLY diagnosis', updatedAt: 11, parentSessionId: 'child-a', origin: 'subagent' },
+    { sessionId: 'fork-a', cwd: 'C:\\ws4', title: 'forked conversation', updatedAt: 8, parentSessionId: 'session-talk' },
+  ],
+  archivedIds: [],
+  workspacePath: 'C:\\ws4',
+})
+check('a subagent session is not listed as a conversation', rowsIn('child-a').length === 0)
+check('  nor is a nested one', rowsIn('child-b').length === 0)
+check('a fork (parentSessionId without origin) is still listed', rowsIn('fork-a').length === 1)
+check('the real conversation is listed', rowsIn('session-talk').length === 1)
+const countEl = window.document.querySelector('.sb-count')
+check('the drawer counts conversations only', countEl !== null && countEl.textContent === '2', countEl ? countEl.textContent : '(missing)')
+
+// A stale render must not be able to open one either.
+const listEl = window.document.querySelector('.sb-list')
+const staleChild = window.document.createElement('div')
+staleChild.className = 'sb-row'
+staleChild.title = 'C:\\ws4 · child-a'
+listEl.appendChild(staleChild)
+posted.length = 0
+staleChild.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+check('a stale subagent row does not open a session', posted.every(m => m.type !== 'openSession'), posted.map(m => m.type).join(','))
+
+
 const failed = results.filter(r => !r.ok)
 console.log('')
 console.log(failed.length === 0 ? '[verify] ALL PASS (' + results.length + ' checks)' : '[verify] FAILED: ' + failed.map(f => f.label).join(' | '))

@@ -48,6 +48,10 @@ PATH 里的 `dsh` CLI → `npx @deepseek-ai/dsh`)。服务器以 **cwd = 当前�
 | `dshWeb.checkout` | 空 | 可选:checkout 路径(用其 apps/cli/lib/bin.js 启动) |
 | `dshWeb.command` | 空 | 整条启动命令覆盖(如 `pnpm dsh`) |
 | `dshWeb.extraArgs` | [] | 追加参数(如 `--trusted-host`) |
+| `dshWeb.attachWaitSeconds` | 30 | 端口没服务时,先等这么久再自启(给受管启动器留重启窗口) |
+| `dshWeb.takeoverAfterSeconds` | 45 | 附着服务连续无响应这么久才接管自启 |
+| `dshWeb.nodeMaxOldSpaceMb` | 8192 | 自启 node 的 `--max-old-space-size`(0 = Node 默认) |
+| `dshWeb.nodeArgs` | [] | 追加给 node 可执行文件本身的参数(checkout 启动器) |
 | `dshWeb.followWorkspace` | true | 自启服务器跟随工作区首文件夹变化重启 |
 | `dshWeb.stopOnExit` | true | 退出 VS Code 时停掉本扩展启动的服务器 |
 

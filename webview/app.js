@@ -80,7 +80,8 @@
       '  <div class="dsh-composer">' +
       '    <div class="composer-card">' +
       '      <div class="attach-tray" hidden></div>' +
-      '      <textarea class="dsh-input" rows="1" placeholder="输入消息,Enter 发送,Shift+Enter 换行"></textarea>' +
+      '      <input type="file" id="attachInput" class="attach-input" accept="image/png,image/jpeg,image/webp,image/gif" multiple hidden>' +
+      '      <textarea class="dsh-input" rows="1" placeholder="输入消息,Enter 发送,Shift+Enter 换行(图片可粘贴/拖入)"></textarea>' +
       '      <div class="composer-row">' +
       '        <div class="cc-left">' +
       '          <div class="hdr-selects">' +
@@ -89,6 +90,7 @@
       '            <button class="hdr-sel pill" id="effortPill" title="推理档位"></button>' +
       '            <button class="hdr-sel pill" id="presetPill" title="预设(仅空白会话可切换)"></button>' +
       '          </div>' +
+      '          <button class="iconbtn compact-btn" id="btnAttach" title="添加图片(也可直接粘贴或拖入)">&#128206;</button>' +
       '          <button class="iconbtn compact-btn" id="btnCompact" title="压缩会话">压缩</button>' +
       '        </div>' +
       '        <div class="cc-right">' +
@@ -310,35 +312,166 @@
       else sendPrompt()
     })
     $('#btnCompact').addEventListener('click', () => post({ type: 'compact', sessionId: S.openId }))
+    // Attachments: the tray, the reader and the part serializer existed, but
+    // nothing ever called them — no paste handler, no drop handler, no picker —
+    // so an image could not get into a sidebar prompt at all.
+    const picker = $('#attachInput')
+    $('#btnAttach').addEventListener('click', () => picker.click())
+    picker.addEventListener('change', () => {
+      const files = Array.from(picker.files || [])
+      picker.value = ''
+      void intakeFiles(files)
+    })
+    input.addEventListener('paste', (e) => {
+      const dt = e.clipboardData
+      const files = filesFromTransfer(dt)
+      if (!files.length) return
+      // A mixed paste keeps its text: only a files-only clipboard is swallowed,
+      // so pasting a screenshot does not leave a stray newline behind.
+      const text = dt && dt.getData ? dt.getData('text/plain') : ''
+      if (!text) e.preventDefault()
+      void intakeFiles(files)
+    })
+    const composer = $('.dsh-composer')
+    composer.addEventListener('dragover', (e) => {
+      e.preventDefault()
+      composer.classList.add('dropping')
+    })
+    composer.addEventListener('dragleave', () => composer.classList.remove('dropping'))
+    composer.addEventListener('drop', (e) => {
+      e.preventDefault()
+      composer.classList.remove('dropping')
+      void intakeFiles(filesFromTransfer(e.dataTransfer))
+    })
     $('.dsh-messages').addEventListener('scroll', () => {
       const m = $('.dsh-messages')
       S.needScroll = m.scrollTop + m.clientHeight > m.scrollHeight - 60
     })
   }
 
+  // ── attachments (images) ──────────────────────────────────────────────────
+  // DSH carries images as prompt parts ({type:'image', mediaType, data, name}) and
+  // the attachment store refuses anything outside png/jpeg/webp/gif or over its
+  // ceilings, so the composer pre-checks the same limits and says why it refused.
+  // The part shape mirrors the web client's own serializer
+  // (ui-conversation/src/client/service.ts:serializeImages).
+  const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif']
   const attachments = []
-  async function addAttachment(file) {
-    const buf = await file.arrayBuffer()
-    const bytes = new Uint8Array(buf)
-    const mediaType = file.type || 'image/png'
+  let attachSeq = 0
+
+  function fmtBytes(n) {
+    if (typeof n !== 'number') return ''
+    if (n < 1024) return n + ' B'
+    if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB'
+    return (n / 1024 / 1024).toFixed(2) + ' MB'
+  }
+
+  /** The attachment store's ceilings, published as the open session's imageLimits projection. */
+  function imageLimits() {
+    const l = S.open && S.open.imageLimits
+    return l && typeof l.maxImageBytes === 'number' ? l : null
+  }
+
+  function attachedBytes() {
+    let n = 0
+    for (const a of attachments) n += a.bytes
+    return n
+  }
+
+  function attachRefuse(reason) {
+    pushSystemRow('图片未加入:' + reason)
+  }
+
+  function bytesToBase64(bytes) {
     let data = ''
     for (let i = 0; i < bytes.length; i += 0x8000) {
       data += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000))
     }
-    const base64 = btoa(data)
-    attachments.push({ type: 'image', mediaType, data: base64, name: file.name })
+    return btoa(data)
+  }
+
+  /** Queue one image for the next prompt. Returns false when it was refused. */
+  async function addAttachment(file) {
+    const name = file.name || 'image'
+    const mediaType = String(file.type || '').toLowerCase()
+    if (!IMAGE_TYPES.includes(mediaType)) {
+      attachRefuse(name + ' 是 ' + (mediaType || '未知类型') + ',只支持 png/jpeg/webp/gif')
+      return false
+    }
+    const limits = imageLimits()
+    if (limits) {
+      if (file.size > limits.maxImageBytes) {
+        attachRefuse(name + ' ' + fmtBytes(file.size) + ' 超过单张上限 ' + fmtBytes(limits.maxImageBytes))
+        return false
+      }
+      if (attachments.length + 1 > limits.maxImagesPerMessage) {
+        attachRefuse('一条消息最多 ' + limits.maxImagesPerMessage + ' 张图片')
+        return false
+      }
+      if (attachedBytes() + file.size > limits.maxMessageImageBytes) {
+        attachRefuse('合计 ' + fmtBytes(attachedBytes() + file.size) + ' 超过单条消息上限 ' + fmtBytes(limits.maxMessageImageBytes))
+        return false
+      }
+    }
+    let base64
+    try {
+      base64 = bytesToBase64(new Uint8Array(await file.arrayBuffer()))
+    } catch (e) {
+      attachRefuse(name + ' 读取失败:' + (e && e.message ? e.message : e))
+      return false
+    }
+    // Identity is the sequence number, not the name: two pasted screenshots are
+    // both called "image.png", and de-duplicating by name dropped the wrong chip.
+    const id = ++attachSeq
+    attachments.push({ id, name, bytes: file.size, part: { type: 'image', mediaType, data: base64, name } })
     const tray = $('.attach-tray')
-    tray.hidden = false
-    const chip = el('span', 'attach-chip', file.name)
+    const chip = el('span', 'attach-chip', name + ' · ' + fmtBytes(file.size))
+    chip.title = mediaType + ' · ' + fmtBytes(file.size) + ' — 点击 × 移除'
     const x = el('button', 'chip-x', '×')
-    x.addEventListener('click', () => {
-      const i = attachments.findIndex((a) => a.name === file.name)
-      if (i >= 0) attachments.splice(i, 1)
-      chip.remove()
-      if (!attachments.length) tray.hidden = true
-    })
+    x.addEventListener('click', () => removeAttachment(id))
     chip.appendChild(x)
     tray.appendChild(chip)
+    tray.hidden = false
+    return true
+  }
+
+  function removeAttachment(id) {
+    const i = attachments.findIndex((a) => a.id === id)
+    if (i < 0) return
+    attachments.splice(i, 1)
+    const tray = $('.attach-tray')
+    const chip = tray.children[i]
+    if (chip) chip.remove()
+    if (!attachments.length) tray.hidden = true
+  }
+
+  function clearAttachments() {
+    attachments.length = 0
+    const tray = $('.attach-tray')
+    if (!tray) return
+    clear(tray)
+    tray.hidden = true
+  }
+
+  /** Image files out of a DataTransferItemList (paste and drag both deliver these). */
+  function filesFromItems(items) {
+    const out = []
+    for (const item of Array.from(items || [])) {
+      if (!item || item.kind !== 'file') continue
+      const file = item.getAsFile ? item.getAsFile() : item
+      if (file) out.push(file)
+    }
+    return out
+  }
+
+  function filesFromTransfer(dt) {
+    if (!dt) return []
+    if (dt.items && dt.items.length) return filesFromItems(dt.items)
+    return Array.from(dt.files || [])
+  }
+
+  async function intakeFiles(files) {
+    for (const f of files) await addAttachment(f)
   }
 
   function currentModel() {
@@ -519,7 +652,10 @@
   function workspaceSessions() {
     const pathNorm = (p) => p ? String(p).replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase() : p
     const ws = pathNorm(S.wsPath)
-    let items = S.sessions.filter((s) => !S.archived.has(s.sessionId))
+    // Subagent sessions are a subagent's own working log, not a conversation the
+    // user opened: the DSH client files them under their parent's catalog. Keyed
+    // on `origin`, because a fork also carries parentSessionId but must stay.
+    let items = S.sessions.filter((s) => !S.archived.has(s.sessionId) && s.origin !== 'subagent')
     if (!S.showAllSessions && ws && S.wsPath) items = items.filter((s) => pathNorm(s.cwd) === ws)
     items = items.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
     return items
@@ -532,8 +668,9 @@
     $('.sb-count').textContent = String(items.length)
     if (!items.length) {
       const none = el('div', 'sb-empty')
-      none.appendChild(el('span', '', S.sessions.length && S.wsPath && !S.showAllSessions ? '本工作区暂无会话(其他工作区共 ' + S.sessions.length + ' 个)' : S.wsPath ? '本工作区还没有会话' : '没有会话(未打开工作区)'))
-      if (S.sessions.length && S.wsPath && !S.showAllSessions) {
+      const conversations = S.sessions.filter((s) => s.origin !== 'subagent' && !S.archived.has(s.sessionId))
+      none.appendChild(el('span', '', conversations.length ? '会话都在下面,但当前工作区没有' : S.wsPath ? '本工作区还没有会话' : '没有会话(未打开工作区)'))
+      if (conversations.length) {
         const showAll = el('button', 'act-btn', '显示全部')
         showAll.addEventListener('click', () => { S.showAllSessions = true; renderSessionList() })
         none.appendChild(showAll)
@@ -566,6 +703,10 @@
         // but a stale render must never be able to revive one.
         if (S.archived.has(it.sessionId)) {
           pushSystemRow('该会话已归档，已在列表中隐藏。取消归档后才能继续对话。')
+          return
+        }
+        if (it.origin === 'subagent') {
+          pushSystemRow('这是子代理(subagent)的会话日志，不是对话，已从列表中隐藏。')
           return
         }
         if (S.openId !== it.sessionId) post({ type: 'openSession', sessionId: it.sessionId })
@@ -1417,15 +1558,13 @@
     if (!S.openId) return
     const content = []
     if (text) content.push({ type: 'text', text })
-    for (const a of attachments) content.push(a)
+    // The wire part only: the tray entry also carries a local id and a byte count.
+    for (const a of attachments) content.push(a.part)
     const busy = S.open && S.open.busy
     post({ type: 'prompt', sessionId: S.openId, mode: busy ? 'steer' : 'queue', content })
     input.value = ''
     input.style.height = 'auto'
-    attachments.length = 0
-    const tray = $('.attach-tray')
-    tray.hidden = true
-    clear(tray)
+    clearAttachments()
     // 不做乐观回显:权威 user/message 事件经 mux 流到达后渲染(已按 seq 去重,避免重复/空气泡)
   }
 

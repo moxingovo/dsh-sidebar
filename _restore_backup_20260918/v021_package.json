@@ -1,0 +1,130 @@
+{
+  "name": "dsh-webview",
+  "displayName": "DSH Web Panel",
+  "description": "Embed the DeepSeek Harness web GUI inside VS Code: attaches to (or auto-starts) the local dsh web server and renders it in a sidebar view and an editor-tab panel.",
+  "version": "0.2.1",
+  "publisher": "local-dsh",
+  "license": "MIT",
+  "icon": "media/dsh.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/moxingovo/dsh-web-panel"
+  },
+  "keywords": [
+    "deepseek",
+    "deepseek-harness",
+    "dsh",
+    "vscode-extension",
+    "webview",
+    "ai-agent",
+    "coding-assistant"
+  ],
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished",
+    "onWebviewPanel:dshWebPanel"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "dshWebPanel.open",
+        "title": "DSH: Open Panel",
+        "icon": "$(window)"
+      },
+      {
+        "command": "dshWebPanel.openBrowser",
+        "title": "DSH: Open in Browser",
+        "icon": "$(globe)"
+      },
+      {
+        "command": "dshWebPanel.reload",
+        "title": "DSH: Reload Panel",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "dshWebPanel.restartServer",
+        "title": "DSH: Restart Server",
+        "icon": "$(debug-restart)"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "dsh",
+          "title": "DeepSeek Harness",
+          "icon": "media/dsh.svg"
+        }
+      ]
+    },
+    "views": {
+      "dsh": [
+        {
+          "type": "webview",
+          "id": "dshWebView",
+          "name": "DSH Panel"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "DSH Web Panel",
+      "properties": {
+        "dshWeb.port": {
+          "type": "number",
+          "default": 3080,
+          "minimum": 1,
+          "maximum": 65535,
+          "description": "Port of the dsh web server to attach to or start."
+        },
+        "dshWeb.attachExisting": {
+          "type": "boolean",
+          "default": true,
+          "description": "Attach to an already-running dsh web server on the port instead of starting a new one."
+        },
+        "dshWeb.spawnIfMissing": {
+          "type": "boolean",
+          "default": true,
+          "description": "Start a dsh web server automatically when none is running (uses the checkout launcher below)."
+        },
+        "dshWeb.checkout": {
+          "type": "string",
+          "default": "",
+          "description": "Optional path to a deepseek-harness checkout (uses apps/cli/lib/bin.js when present). Leave empty to auto-detect: the dsh CLI on PATH, then npx @deepseek-ai/dsh."
+        },
+        "dshWeb.command": {
+          "type": "string",
+          "default": "",
+          "description": "Optional full command override to launch dsh web (e.g. \"pnpm dsh\"). Runs via shell with cwd = the first workspace folder; overrides the checkout launcher."
+        },
+        "dshWeb.extraArgs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Extra arguments appended to the server launch (e.g. --trusted-host)."
+        },
+        "dshWeb.autoOpen": {
+          "type": "boolean",
+          "default": true,
+          "description": "Open the DSH editor-tab panel automatically when VS Code starts."
+        },
+        "dshWeb.followWorkspace": {
+          "type": "boolean",
+          "default": true,
+          "description": "Restart a self-started dsh server when the first workspace folder changes, so the harness workspace root follows the editor."
+        },
+        "dshWeb.stopOnExit": {
+          "type": "boolean",
+          "default": true,
+          "description": "Stop the server when VS Code exits (only when this extension started it)."
+        }
+      }
+    }
+  }
+}

@@ -1,8 +1,8 @@
 {
   "name": "dsh-webview",
-  "displayName": "DSH Web Panel",
-  "description": "Embed the DeepSeek Harness web GUI inside VS Code: attaches to (or auto-starts) the local dsh web server and renders it in a sidebar view and an editor-tab panel.",
-  "version": "0.2.1",
+  "displayName": "DSH Native Sidebar",
+  "description": "DSH 原生侧边栏:在 VS Code 内提供 Claude Code 风格原生聊天视图,复用现有 dsh web 服务(127.0.0.1:3080)与 ~/.dsh,无 iframe、无第二个 Gateway。",
+  "version": "0.3.5",
   "publisher": "local-dsh",
   "license": "MIT",
   "icon": "media/dsh.png",
@@ -27,30 +27,54 @@
   ],
   "activationEvents": [
     "onStartupFinished",
-    "onWebviewPanel:dshWebPanel"
+    "onView:dshWebViewAux",
+    "onView:dshLauncher"
   ],
   "main": "./extension.js",
   "contributes": {
     "commands": [
       {
-        "command": "dshWebPanel.open",
-        "title": "DSH: Open Panel",
+        "command": "dshPanel.toggle",
+        "title": "DSH: 展开/收起侧边栏",
         "icon": "$(window)"
       },
       {
-        "command": "dshWebPanel.openBrowser",
-        "title": "DSH: Open in Browser",
+        "command": "dshPanel.openBrowser",
+        "title": "DSH: 在浏览器中打开",
         "icon": "$(globe)"
       },
       {
-        "command": "dshWebPanel.reload",
-        "title": "DSH: Reload Panel",
+        "command": "dshPanel.reload",
+        "title": "DSH: 重载侧边栏",
         "icon": "$(refresh)"
       },
       {
-        "command": "dshWebPanel.restartServer",
-        "title": "DSH: Restart Server",
+        "command": "dshPanel.openPanel",
+        "title": "DSH: 打开对话面板",
+        "icon": {
+          "light": "media/dsh.svg",
+          "dark": "media/dsh.svg"
+        }
+      },
+      {
+        "command": "dshPanel.restartServer",
+        "title": "DSH: 重启服务",
         "icon": "$(debug-restart)"
+      }
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "dshPanel.openPanel",
+          "group": "navigation"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "dshPanel.toggle",
+        "key": "ctrl+alt+d",
+        "mac": "cmd+alt+d"
       }
     ],
     "viewsContainers": {
@@ -60,14 +84,28 @@
           "title": "DeepSeek Harness",
           "icon": "media/dsh.svg"
         }
+      ],
+      "secondarySidebar": [
+        {
+          "id": "dsh-aux",
+          "title": "DeepSeek Harness",
+          "icon": "media/dsh.svg"
+        }
       ]
     },
     "views": {
       "dsh": [
         {
           "type": "webview",
-          "id": "dshWebView",
-          "name": "DSH Panel"
+          "id": "dshLauncher",
+          "name": "DeepSeek Harness"
+        }
+      ],
+      "dsh-aux": [
+        {
+          "type": "webview",
+          "id": "dshWebViewAux",
+          "name": "DSH 对话"
         }
       ]
     },
@@ -79,27 +117,27 @@
           "default": 3080,
           "minimum": 1,
           "maximum": 65535,
-          "description": "Port of the dsh web server to attach to or start."
+          "description": "dsh web 服务端口(附着或启动)。"
         },
         "dshWeb.attachExisting": {
           "type": "boolean",
           "default": true,
-          "description": "Attach to an already-running dsh web server on the port instead of starting a new one."
+          "description": "附着到该端口上已运行的 dsh web 服务,而非自启一个新的。"
         },
         "dshWeb.spawnIfMissing": {
           "type": "boolean",
           "default": true,
-          "description": "Start a dsh web server automatically when none is running (uses the checkout launcher below)."
+          "description": "端口上没有服务时自动启动 dsh web。"
         },
         "dshWeb.checkout": {
           "type": "string",
           "default": "",
-          "description": "Optional path to a deepseek-harness checkout (uses apps/cli/lib/bin.js when present). Leave empty to auto-detect: the dsh CLI on PATH, then npx @deepseek-ai/dsh."
+          "description": "deepseek-harness checkout 路径(存在 apps/cli/lib/bin.js 时直接使用)。留空自动探测:先 PATH 上的 dsh CLI,再 npx @deepseek-ai/dsh。"
         },
         "dshWeb.command": {
           "type": "string",
           "default": "",
-          "description": "Optional full command override to launch dsh web (e.g. \"pnpm dsh\"). Runs via shell with cwd = the first workspace folder; overrides the checkout launcher."
+          "description": "自定义启动命令(如 pnpm dsh),以第一个工作区文件夹为 cwd 运行,优先于 checkout 启动器。"
         },
         "dshWeb.extraArgs": {
           "type": "array",
@@ -107,22 +145,22 @@
             "type": "string"
           },
           "default": [],
-          "description": "Extra arguments appended to the server launch (e.g. --trusted-host)."
+          "description": "追加到服务启动命令的额外参数(如 --trusted-host)。"
         },
         "dshWeb.autoOpen": {
           "type": "boolean",
-          "default": true,
-          "description": "Open the DSH editor-tab panel automatically when VS Code starts."
+          "default": false,
+          "description": "(已废弃)是否自动展开 DSH 面板;默认不展开,点击右上角 DSH 图标才打开。"
         },
         "dshWeb.followWorkspace": {
           "type": "boolean",
           "default": true,
-          "description": "Restart a self-started dsh server when the first workspace folder changes, so the harness workspace root follows the editor."
+          "description": "首个工作区文件夹变化时,重启自启的 dsh 服务器使 harness 工作区根目录跟随编辑器。"
         },
         "dshWeb.stopOnExit": {
           "type": "boolean",
           "default": true,
-          "description": "Stop the server when VS Code exits (only when this extension started it)."
+          "description": "VS Code 退出时停止由本扩展启动的服务(仅当本扩展启动了它)。"
         }
       }
     }

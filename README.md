@@ -1,55 +1,50 @@
 # DSH Web Panel
 
-Embed the [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (dsh)
-web GUI inside VS Code. Attaches to — or automatically starts — the local dsh web
-server and renders the full GUI in an iframe: sessions, terminal, plan approval,
-slash commands, todo, token/cache stats — everything, unchanged.
+A **Claude Code-style native DSH sidebar** for VS Code: a self-written native
+front-end (no iframe) that reuses your existing dsh web service
+(127.0.0.1:3080 by default) and `~/.dsh` — no second gateway, no server changes.
 
 > Unofficial community extension. Not affiliated with DeepSeek.
 
-- **Sidebar view**: DSH activity-bar icon → "DSH Panel".
-- **Editor-tab panel** (recommended, wider): Command Palette → `DSH: Open Panel`;
-  opens automatically on startup by default (`dshWeb.autoOpen`).
-- **Status bar indicator** (✓ running / ⎌ attached / ⟳ starting / ⛔ error); click to open the panel.
-- **Panel memory**: the DSH tab is restored with your window layout across restarts.
-- **Workspace follow**: a self-started server restarts with the new cwd when the
-  first workspace folder changes (dsh's workspace root = server cwd).
-- **No extra windows**: the extension spawns dsh hidden (`windowsHide`); nothing pops up.
-- **Self-healing**: if an attached instance dies (e.g. its desktop window was
-  closed), it is detected within ~15s and a hidden instance takes over; a crashed
-  self-started instance restarts automatically.
+- **Entry points (same as Claude Code)**: the **DeepSeek Harness icon** (DeepSeek
+  blue) in the top-right auxiliary bar — click to summon the chat panel; the
+  status-bar **DSH** item shows server state and toggles the panel; `Ctrl+Alt+D`.
+- **Sessions**: current-workspace sessions only — create / switch / archive /
+  rename / fork; the context meter shows real server-side token data.
+- **Model & preset**: model + reasoning-effort pickers; preset switching is
+  blank-session-only (locked once the conversation starts — a server constraint).
+- **Capabilities**: streaming replies, stop, tool cards / approval cards / todos /
+  timeline, image attachments (vision), `/compact`, Markdown + code blocks.
+- **Protocol**: `POST /api/*` RPC plus dual WebSocket downlinks (mux/host
+  frames) — see [docs/protocol.md](https://github.com/moxingovo/dsh-web-panel/blob/HEAD/docs/protocol.md).
 
 ## Install
 
 From a released `.vsix`:
 
 ```
-code --install-extension dsh-webview-0.2.1.vsix
+code --install-extension dsh-webview-0.3.1.vsix
 ```
 
-Or build it yourself:
+Or build it yourself (run in the repo root):
 
 ```
-cd dsh-webview
 npx @vscode/vsce package
-code --install-extension dsh-webview-0.2.1.vsix
+pwsh -File test\fix-vsix.ps1   # repairs vsce's UTF-8 mangling of package.json
+code --install-extension dsh-webview-0.3.1.vsix
 ```
+
+> ⚠️ Known issue: on some Windows environments `vsce package` re-encodes the
+> Chinese text in `package.json` as GBK mojibake and can even break the JSON.
+> Always run `test\fix-vsix.ps1` after packaging.
 
 ## Zero-config launch
 
 On startup the extension probes `dshWeb.port` (default 3080) and attaches if a
-real dsh instance responds (page carries the `__DSH_BOOT__` manifest). Otherwise
-it starts one, trying each strategy in order (120s each):
-
-1. `dshWeb.command` (explicit override),
-2. `dshWeb.checkout` (a deepseek-harness checkout, if set and present),
-3. `dsh` on PATH (official npm install: `npm i -g @deepseek-ai/dsh`),
-4. `npx --yes @deepseek-ai/dsh` (downloads the CLI on demand — zero setup).
-
-The server runs with **cwd = the first workspace folder**, so each project gets
-its own dsh workspace. Requirements: VS Code ≥ 1.85 and Node.js (both already
-required by the official dsh setup). Configure your DeepSeek API key in the GUI
-as usual.
+dsh instance responds. Otherwise it starts one, trying in order:
+`dshWeb.command` → `dshWeb.checkout` → `dsh` on PATH → `npx @deepseek-ai/dsh`.
+The server runs with **cwd = the first workspace folder** and `DSH_HOME` pinned
+to `~/.dsh` (identical to attach — never isolated).
 
 ## Settings
 
@@ -59,31 +54,54 @@ as usual.
 | `dshWeb.attachExisting` | true | Reuse a running instance instead of starting a new one |
 | `dshWeb.spawnIfMissing` | true | Start a server when none is running |
 | `dshWeb.checkout` | "" (auto) | Optional checkout path (launches `apps/cli/lib/bin.js`) |
-| `dshWeb.command` | "" | Full command override, e.g. `pnpm dsh` (runs via shell in the workspace) |
-| `dshWeb.extraArgs` | [] | Extra arguments appended to the launch, e.g. `--trusted-host` |
-| `dshWeb.autoOpen` | true | Open the DSH panel automatically on startup |
+| `dshWeb.command` | "" | Full command override, e.g. `pnpm dsh` |
+| `dshWeb.extraArgs` | [] | Extra arguments, e.g. `--trusted-host` |
 | `dshWeb.followWorkspace` | true | Restart self-started server when the first folder changes |
-| `dshWeb.stopOnExit` | true | Stop a self-started server when VS Code exits (process-tree kill) |
+| `dshWeb.stopOnExit` | true | Stop a self-started server when VS Code exits |
 
-Troubleshooting: **Output → DSH Server**.
+Troubleshooting: **Output → DSH** (logs connection and protocol traffic).
 
-## Known boundaries
+## Troubleshooting: missing top-right icon / persistent "Chat" tab
 
-- The panel shows dsh's own web UI — it is **not** a Claude Code panel clone.
-- "DSH: Restart Server" only restarts servers started by this extension; restart
-  an external instance yourself, then run "DSH: Reload Panel".
-- On exit, self-started servers are killed hard (taskkill /T on Windows); dsh
-  session logs survive crashes, so this is generally harmless.
+Two independent root causes, both fixed by the bundled one-click `fix-dsh.cmd`:
+
+### Cause 1: the extension scan cache points at a deleted old-version folder
+
+VS Code caches its extension scan in `.vscode\extensions\extensions.json`. If a new
+version is installed by deleting the old folder, VS Code still looks for the old path
+at startup → ENOENT → the extension is marked broken and the new version in the same
+folder is **never discovered** (hence no icon).
+
+Fix: `test\fix-cache.js` — rewrites the cache entry to the new path, drops the
+profile-level scan caches (forcing a full rescan), and repairs the placeholder icon
+path. Backups are created automatically.
+
+### Cause 2: auxiliary-bar container icons / Chat tab persistence live in global storage
+
+VS Code 1.136 stores auxiliary-bar container icons (title-bar / right-edge strip) in
+**global** storage `workbench.auxiliarybar.pinnedPanels`; the Chat tab's persistence
+lives there too. Patching only the per-workspace state is ineffective, and edits made
+while VS Code is running get overwritten on exit.
+
+Fix: `test\fix-state.js` — removes Chat from the global pinned list, registers
+`dsh-aux`, hides the Chat view across all workspace DBs, and backs up every
+`state.vscdb` (`.bak-dsh`); idempotent.
+
+### Usage
+
+1. **Fully exit VS Code** (all windows, including minimized);
+2. Double-click `fix-dsh.cmd` on the Desktop (it refuses to run while VS Code is open);
+3. Reopen VS Code → the blue harness icon appears top-right, Chat is gone.
 
 ## Development
 
 ```
-# headless checks (mock the vscode API; attach + spawn + real-launch paths)
-node test/mock-verify.js
-node test/spawn-verify.js      # needs pipe-capable shell (no sandbox)
-node test/real-launch-verify.js # spawns the real dsh from the checkout
+node test/mock-verify.js      # mock vscode API contract checks
+node test/ui-smoke.js         # jsdom render checks of the webview UI (24 checks)
+node test/protocol-smoke.js   # end-to-end against a real service (create/stream/stop/archive)
+node test/bridge-e2e.js       # full bridge chain (mock vscode + real 3080)
 ```
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT — see [LICENSE](https://github.com/moxingovo/dsh-web-panel/blob/HEAD/LICENSE).

@@ -97,9 +97,19 @@ Fix: `test\fix-state.js` — removes Chat from the global pinned list, registers
 
 ```
 node test/respond-wire-verify.js   # permission/question answer wire shape (14 checks, headless)
+node test/approval-card-verify.js  # approval card rendering + dedup (12 checks, jsdom)
 node test/real-launch-verify.js    # spawns the real dsh web server through the launch chain
 node test/spawn-verify.js          # launch-chain (checkout / dsh CLI / npx) checks
 ```
+
+`approval-card-verify.js` runs the real `webview/app.js` in jsdom and drives it
+uith the same host messages the extension sends. It pins the field-name contract
+behind the duplicate-card bug: session-log events carry the approval id as
+`data.id`, while server-request frames carry it as `approvalId`; reading only the
+latter makes the id `undefined`, so the log card and the replayed frame render as
+two identical cards and `approval/decided` never settles either. It needs jsdom,
+so point `DSH_CHECKOUT_NODE_MODULES` at a checkout that has one, e.g.
+`$env:DSH_CHECKOUT_NODE_MODULES = 'C:\Users\20906\deepseek-harness\node_modules'`.
 
 `respond-wire-verify.js` is the regression guard for the sidebar's permission
 buttons: it stands up a fake dsh gateway, activates the extension against it,

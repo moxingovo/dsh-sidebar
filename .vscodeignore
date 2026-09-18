@@ -1,6 +1,15 @@
+.github/**
 .vscode/**
-**/*.map
-node_modules/**
 test/**
+node_modules/**
+*.vsix
+**/*.map
+.gitignore
+.editorconfig
 RELEASE.md
-README.md
+# Local restore points and manual backups must never ship: one of these
+# carried a full extensions.json into a packaged vsix.
+_restore_backup_*/**
+*.bak
+*.bak-*
+*.vsix.bak

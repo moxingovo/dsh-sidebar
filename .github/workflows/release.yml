@@ -1,0 +1,95 @@
+name: Build & Release VSIX
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build VSIX
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Syntax checks
+        run: |
+          node --check extension.js
+          node --check src/protocol.js
+          node --check src/websocket.js
+          node --check webview/app.js
+          node --check webview/markdown.js
+          node --check test/mock-verify.js
+
+      - name: Install jsdom (ui-smoke)
+        run: npm install --no-save --prefix test/ui-smoke jsdom
+
+      - name: Run tests
+        run: |
+          node test/mock-verify.js
+          node test/ui-smoke.js
+
+      - name: Install vsce
+        run: npm install --global @vscode/vsce
+
+      - name: Package VSIX
+        run: vsce package
+        # 注:package.json 中文乱码是 Windows 上 vsce 的 GBK 转码问题;
+        # Linux runner 输出为干净 UTF-8,无需 test/fix-vsix.ps1 修复。
+
+      - name: Upload VSIX artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vsix
+          path: '*.vsix'
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    if: github.event_name == 'push'
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: vsix
+          path: artifacts
+
+      - name: Extract release notes from CHANGELOG
+        shell: bash
+        run: |
+          section="${GITHUB_REF_NAME#v}"
+          awk -v sec="## ${section}" '$0==sec{on=1;next} on&&/^## /{exit} on{print}' CHANGELOG.md > RELEASE_NOTES.md
+          if [ ! -s RELEASE_NOTES.md ]; then
+            echo "No CHANGELOG section found for ${section}" >&2
+            exit 1
+          fi
+
+      - name: Delete stale release for this tag (re-publish safety)
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release delete "${GITHUB_REF_NAME}" --yes || true
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: artifacts/*.vsix
+          body_path: RELEASE_NOTES.md

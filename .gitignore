@@ -3,3 +3,7 @@ node_modules/
 .npm-cache/
 __pycache__/
 *.log
+# 本地回滚点与手工备份：不进版本库（内容由 git 历史保存）
+*.bak
+*.bak-*
+_restore_backup_*/

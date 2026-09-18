@@ -447,13 +447,34 @@ class PanelBridge {
         }
       }
       if (list === null) throw new Error('未连接到 dsh 服务')
-      const workspaces = await this.rpc('workspace.list', {}).catch(() => ({ archivedSessionIds: [], items: [] }))
+      // The archive set must never be silently emptied: `sessionList` carries the whole
+      // workspace, and the webview filters archived ids out of it. A `catch(() => [])`
+      // here used to mean "one failed call" → empty set → every archived conversation
+      // reappeared in the drawer and could be opened and messaged again. Retry, and on
+      // final failure omit the field so the webview keeps the set it already has.
+      let archivedIds = null
+      for (let i = 0; i < 3; i++) {
+        try {
+          const workspaces = await this.rpc('workspace.list', {})
+          archivedIds = workspaces.archivedSessionIds || []
+          break
+        } catch (err) {
+          if (!this.client) { await sleep(800); continue }
+          output.appendLine('[dsh] workspace.list failed (' + i + '): ' + (err && err.message))
+          await sleep(400)
+        }
+      }
       // 会话列表 = VS Code 当前文件夹对应的 harness 工作区(大小写/斜杠归一化匹配)
       const ws = firstWorkspacePath()
       const items = (ws && list.items || []).filter((s) => normPath(s.cwd) === normPath(ws))
       const match = items.length
-      output.appendLine('[dsh] session.list total=' + (list.items || []).length + ' workspace=' + (ws || '(none)') + ' match=' + match)
-      this.send({ type: 'sessionList', items, archivedIds: workspaces.archivedSessionIds || [], workspacePath: ws || null })
+      output.appendLine('[dsh] session.list total=' + (list.items || []).length + ' workspace=' + (ws || '(none)') + ' match=' + match + ' archived=' + (archivedIds === null ? '(unavailable — keeping current)' : archivedIds.length))
+      this.send({
+        type: 'sessionList',
+        items,
+        ...archivedIds === null ? {} : { archivedIds },
+        workspacePath: ws || null,
+      })
     } catch (e) { this.error('session.list', e) }
   }
 

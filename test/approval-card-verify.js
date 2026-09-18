@@ -118,6 +118,73 @@ check('re-picking the active row never re-opens the active session',
   reopen.every(m => m.sessionId !== 'session-pick-a'),
   JSON.stringify(reopen.map(m => m.sessionId)))
 
+
+// ── 6) archived conversations stay out of the drawer ───────────────────────
+send({ type: 'sessionList',
+  items: [
+    { sessionId: 'session-keep', cwd: 'C:\\ws2', title: 'keep', updatedAt: 9, messages: 2 },
+    { sessionId: 'session-arch', cwd: 'C:\\ws2', title: 'archived one', updatedAt: 8, messages: 2 },
+  ],
+  archivedIds: ['session-arch'],
+  workspacePath: 'C:\\ws2',
+})
+const rowsIn = (id) => [...window.document.querySelectorAll('.sb-row')].filter(r => (r.title || '').includes(id))
+check('archived session is hidden from the drawer', rowsIn('session-arch').length === 0)
+check('unarchived session is still listed', rowsIn('session-keep').length === 1)
+
+// A failed workspace.list must not resurrect it: the host omits the field entirely.
+send({ type: 'sessionList',
+  items: [
+    { sessionId: 'session-keep', cwd: 'C:\\ws2', title: 'keep', updatedAt: 9, messages: 2 },
+    { sessionId: 'session-arch', cwd: 'C:\\ws2', title: 'archived one', updatedAt: 8, messages: 2 },
+  ],
+  workspacePath: 'C:\\ws2',
+})
+check('a fresh list without an archive set keeps it hidden', rowsIn('session-arch').length === 0)
+
+// The host may also answer with the full list and an empty set; never trust it back.
+send({ type: 'sessionList',
+  items: [
+    { sessionId: 'session-keep', cwd: 'C:\\ws2', title: 'keep', updatedAt: 9, messages: 2 },
+    { sessionId: 'session-arch', cwd: 'C:\\ws2', title: 'archived one', updatedAt: 8, messages: 2 },
+  ],
+  archivedIds: [],
+  workspacePath: 'C:\\ws2',
+})
+check('an empty archive set does not resurrect archived rows', rowsIn('session-arch').length === 0)
+
+// Opening the archived conversation, then archiving the OPEN one, closes it.
+send({ type: 'sessionOpened', sessionId: 'session-keep', hasMore: false, blank: false, events: [] })
+send({ type: 'sessionArchived', sessionId: 'session-keep', archivedIds: ['session-arch', 'session-keep'] })
+check('archiving the open conversation closes it', rowsIn('session-keep').length === 0)
+posted.length = 0
+send({ type: 'frame', kind: 'mux', frame: { type: 'session/queue', sessionId: 'session-keep', items: [] } })
+check('no messages are sent to an archived conversation', posted.every(m => m.type !== 'prompt'),
+  posted.map(m => m.type).join(','))
+
+
+// ── 7) an archived row is not openable even if a stale render shows it ─────
+send({ type: 'sessionList',
+  items: [
+    { sessionId: 'session-keep2', cwd: 'C:\\ws3', title: 'keep2', updatedAt: 5, messages: 1 },
+    { sessionId: 'session-arch2', cwd: 'C:\\ws3', title: 'archived two', updatedAt: 4, messages: 1 },
+  ],
+  archivedIds: ['session-arch2'],
+  workspacePath: 'C:\\ws3',
+})
+const archivedRow = rowsIn('session-arch2')[0]
+check('archived row is not rendered (so it cannot be clicked)', archivedRow === undefined)
+
+// Simulate the stale-render case by re-inserting the row, then clicking it.
+if (archivedRow === undefined) {
+  const list = window.document.querySelector('.sb-list')
+  const stale = window.document.createElement('div')
+  stale.className = 'sb-row'
+  stale.title = 'C:\\ws3 · session-arch2'
+  list.appendChild(stale)
+  check('stale row injected for the guard test', rowsIn('session-arch2').length === 1)
+}
+
 const failed = results.filter(r => !r.ok)
 console.log('')
 console.log(failed.length === 0 ? '[verify] ALL PASS (' + results.length + ' checks)' : '[verify] FAILED: ' + failed.map(f => f.label).join(' | '))

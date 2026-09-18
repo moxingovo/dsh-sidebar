@@ -390,8 +390,15 @@
         break
       case 'sessionList':
         S.sessions = m.items || []
-        S.archived = new Set(m.archivedIds || [])
+        // Only replace the archive set with an authoritative answer. The host omits
+        // `archivedIds` when it could not read it, and an empty array is not treated as
+        // "nothing is archived" because that would resurrect every archived
+        // conversation into the drawer on one failed call.
+        if (Array.isArray(m.archivedIds) && m.archivedIds.length > 0) {
+          S.archived = new Set(m.archivedIds)
+        }
         if (m.workspacePath) S.wsPath = m.workspacePath
+        dropArchivedOpenSession()
         renderSessionList()
         // A2: 记住上次会话,自动恢复
         if (!S.openId && S.lastSessionId && S.conn === 'connected') {
@@ -555,6 +562,12 @@
         // conversation the click just opened. Also closes when re-picking the
         // active row, which otherwise looked like a dead click.
         closeSessionBar()
+        // Defensive: an archived row should not be reachable (the list filters them),
+        // but a stale render must never be able to revive one.
+        if (S.archived.has(it.sessionId)) {
+          pushSystemRow('该会话已归档，已在列表中隐藏。取消归档后才能继续对话。')
+          return
+        }
         if (S.openId !== it.sessionId) post({ type: 'openSession', sessionId: it.sessionId })
       })
       row.addEventListener('contextmenu', (e) => {
@@ -614,7 +627,23 @@
 
   function removeSessionRow(sessionId) {
     S.sessions = S.sessions.filter((s) => s.sessionId !== sessionId)
+    dropArchivedOpenSession()
     renderSessionList()
+  }
+
+  /**
+   * Close the open conversation when it turns out to be archived.
+   *
+   * The drawer hides archived sessions, but "hidden from the list" was the only thing
+   * archiving did: the conversation could stay open in the chat pane and accept new
+   * messages, which is how an archived conversation kept coming back. Reopening one is
+   * refused at the click site too, so this only has to handle the live state change.
+   */
+  function dropArchivedOpenSession() {
+    if (!S.openId || !S.archived.has(S.openId)) return
+    S.openId = null
+    S.open = null
+    renderAll()
   }
 
   // ── open session ──────────────────────────────────────────────────────────

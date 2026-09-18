@@ -764,14 +764,16 @@
         // 仍把它建成一张「待应答」的卡片，等 mux 重放 approval/requested 时再由
         // applyApprovalRequest 补上 rpcId —— 否则点击按钮会带着 rpcId=undefined 回传，
         // 服务端按 rpcId 路由不到 pending 项，直接 not-pending。
-        const existing = [...rows].reverse().find((r) => r.kind === 'approval' && r.approvalId === d.approvalId)
+        const askedId = approvalEventId(d)
+        const existing = [...rows].reverse().find((r) => r.kind === 'approval' && r.approvalId === askedId)
         if (!existing) {
-          rows.push({ kind: 'approval', approvalId: d.approvalId, toolName: d.toolName || '', reason: d.reason || '', decided: false, outcome: null, ts: ev.time })
+          rows.push({ kind: 'approval', approvalId: askedId, toolName: d.toolName || '', reason: d.reason || '', decided: false, outcome: null, ts: ev.time })
         }
         break
       }
       case 'approval/decided': {
-        const last = [...rows].reverse().find((r) => r.kind === 'approval' && r.approvalId === d.approvalId)
+        const decidedId = approvalEventId(d)
+        const last = [...rows].reverse().find((r) => r.kind === 'approval' && r.approvalId === decidedId)
         if (last) { last.decided = true; last.outcome = d.outcome; refreshApprovalRow(last) }
         break
       }
@@ -1056,6 +1058,19 @@
     }
     wrap.appendChild(list)
     return wrap
+  }
+
+  /**
+   * 权限请求的稳定 id。
+   *
+   * 会话日志里 approval/asked|decided 的 data 字段名是 **id**
+   * （见 dsh user-approval：session.append('approval/asked', { id, toolName })），
+   * 而 server-request 帧里叫 **approvalId**。之前回放一律读 d.approvalId 拿到 undefined，
+   * 于是同一张卡片被建两次（去重匹配不上），且 approval/decided 也回填不上。
+   */
+  function approvalEventId(d) {
+    if (!d) return undefined
+    return d.id || d.approvalId
   }
 
   function renderApproval(row) {

@@ -6,11 +6,24 @@
 // no image could get into a sidebar prompt at all. These checks drive the real
 // webview scripts in jsdom and assert the canonical prompt part that leaves.
 //
-// Run: set DSH_CHECKOUT_NODE_MODULES to a checkout with jsdom, then
-//   node test/attach-paste-verify.js
+// Run: node test/attach-paste-verify.js  (jsdom from DSH_CHECKOUT_NODE_MODULES,
+// this repo's node_modules, or the global resolution order)
 const fs = require('node:fs')
 const path = require('node:path')
-const { JSDOM } = require(process.env.DSH_CHECKOUT_NODE_MODULES + '/jsdom')
+// jsdom comes from a harness checkout (DSH_CHECKOUT_NODE_MODULES) or from this
+// repo's own node_modules after "npm install --no-save jsdom" — the CI runner
+// installs it there, so a hardcoded checkout path fails the whole run.
+function loadJsdom() {
+  const roots = []
+  if (process.env.DSH_CHECKOUT_NODE_MODULES) roots.push(process.env.DSH_CHECKOUT_NODE_MODULES)
+  roots.push(path.join(__dirname, '..', 'node_modules'))
+  for (const root of roots) {
+    try { return require(path.join(root, 'jsdom')) } catch {}
+  }
+  try { return require('jsdom') } catch {}
+  throw new Error('jsdom not found (tried ' + roots.join(', ') + ') — set DSH_CHECKOUT_NODE_MODULES or run: npm install --no-save jsdom')
+}
+const { JSDOM } = loadJsdom()
 
 const WEBVIEW = path.join(__dirname, '..', 'webview')
 const dom = new JSDOM('<!DOCTYPE html><html><body><div id="app"></div></body></html>', {

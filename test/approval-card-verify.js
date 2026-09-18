@@ -1,7 +1,20 @@
 const fs = require('node:fs')
-const path = require('node:path')
 const Module = require('node:module')
-const { JSDOM } = require(process.env.DSH_CHECKOUT_NODE_MODULES + '/jsdom')
+const path = require('node:path')
+// jsdom comes from a harness checkout (DSH_CHECKOUT_NODE_MODULES) or from this
+// repo's own node_modules after "npm install --no-save jsdom" — the CI runner
+// installs it there, so a hardcoded checkout path fails the whole run.
+function loadJsdom() {
+  const roots = []
+  if (process.env.DSH_CHECKOUT_NODE_MODULES) roots.push(process.env.DSH_CHECKOUT_NODE_MODULES)
+  roots.push(path.join(__dirname, '..', 'node_modules'))
+  for (const root of roots) {
+    try { return require(path.join(root, 'jsdom')) } catch {}
+  }
+  try { return require('jsdom') } catch {}
+  throw new Error('jsdom not found (tried ' + roots.join(', ') + ') — set DSH_CHECKOUT_NODE_MODULES or run: npm install --no-save jsdom')
+}
+const { JSDOM } = loadJsdom()
 
 const WEBVIEW = path.join(__dirname, '..', 'webview')
 const dom = new JSDOM('<!DOCTYPE html><html><body><div id="app"></div></body></html>', {

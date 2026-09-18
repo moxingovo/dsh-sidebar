@@ -39,7 +39,7 @@ jobs:
       # harness; DSH_CHECKOUT_NODE_MODULES is where they look for jsdom.
       - name: Run tests
         env:
-          DSH_CHECKOUT_NODE_MODULES: ${{ github.workspace }}
+          DSH_CHECKOUT_NODE_MODULES: ${{ github.workspace }}/node_modules
         run: |
           node test/respond-wire-verify.js
           node test/session-list-filter-verify.js

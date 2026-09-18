@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.1
+
+(2026-09-19) 修复:**桌面 harness 重启后侧边栏不会自动恢复**。健康定时器只探测端口,而重启时端口会在 45 秒接管预算内恢复 → manager 状态始终是 `attached`、没有任何状态变化、也没人重开那条 socket,面板就一直卡在"正在连接",必须手动重载窗口。现在 socket 掉线后 3 秒自行重连(仅 attached/ready 状态,disconnect 时取消)。
+另外:本地 `real-launch-verify.js` 默认使用 `~/deepseek-harness-0.1.6`(回退链解析到的是旧 harness,读不了 0.1.6 迁移过的凭据存储)。
+
 ## 0.6.0
 
 (2026-09-19) 跟进 **DeepSeek Harness 0.1.6-alpha.2(Typert API Gateway)**:旧版 wire 在 0.1.6 上完全不可用(探测、鉴权、API、事件流全变),本版把协议层重写并补齐功能缺口。回归脚本 `test/*.js` 共 9 个套件 129 项断言全绿。

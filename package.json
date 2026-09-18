@@ -2,7 +2,7 @@
   "name": "dsh-webview",
   "displayName": "DSH Native Sidebar",
   "description": "DSH 原生侧边栏:在 VS Code 内提供 Claude Code 风格原生聊天视图,复用现有 dsh web 服务(127.0.0.1:3080)与 ~/.dsh,无 iframe、无第二个 Gateway。",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "publisher": "local-dsh",
   "license": "MIT",
   "icon": "media/dsh.png",

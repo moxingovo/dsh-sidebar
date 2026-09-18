@@ -510,6 +510,7 @@ class PanelBridge {
       if (info.stream === 'mux') this.muxUp = false
       if (info.stream === 'host') this.hostUp = false
       this.updateState()
+      if (info.stream === 'mux') this.scheduleReconnect()
     })
     output.appendLine('[dsh] protocol client on ' + urlOf(this.port))
     // Authenticate BEFORE opening the socket. 0.1.6 answers 401 to /api and to
@@ -577,6 +578,25 @@ class PanelBridge {
   }
 
   /**
+   * Reopen the panel's socket after it drops.
+   *
+   * The health timer only watches the PORT: when the desktop harness restarts,
+   * the port answers again inside its takeover budget, the manager state never
+   * leaves 'attached', no state change fires and nothing reopened the socket —
+   * the panel sat on "reconnecting" until the window was reloaded by hand.
+   */
+  scheduleReconnect() {
+    if (this.reconnectTimer || this.disposing) return
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null
+      if (this.disposing) return
+      if (manager.state !== 'attached' && manager.state !== 'ready') return
+      output.appendLine('[dsh] socket dropped — reconnecting the panel client')
+      this.connect()
+    }, 3000)
+  }
+
+  /**
    * Permission preset choices, fetched once per connection.
    *
    * 0.1.6 pushes the session projection as `{currentValue}` only — the options
@@ -625,6 +645,7 @@ class PanelBridge {
     this.muxUp = false
     this.hostUp = false
     this.connected = false
+    if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = null }
     if (this.client) { this.client.close(); this.client = null }
   }
 

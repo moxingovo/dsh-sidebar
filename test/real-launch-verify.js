@@ -3,11 +3,23 @@
 // extension's launch chain (same as official "dsh web --port N").
 const path = require('node:path')
 const mockStatusBar = { text: '', tooltip: '', command: '', show() {} }
-// Set DSH_CHECKOUT to a local checkout to test the checkout launcher;
-// leave it unset to exercise the auto-detect chain (dsh CLI → npx).
+// Set DSH_CHECKOUT to a local checkout to test the checkout launcher; unset it to
+// exercise the auto-detect chain (dsh CLI → npx). Locally we default to the 0.1.6
+// checkout when it exists: the fallback chain resolves an OLDER harness (PATH `dsh` or npm latest), which cannot read a store migrated by 0.1.6 and exits 1 —
+// so without this the suite failed on a launch chain CI cannot provide either.
+const fs = require('node:fs')
+const os = require('node:os')
+function defaultCheckout() {
+  if (process.env.DSH_CHECKOUT) return process.env.DSH_CHECKOUT
+  for (const name of ['deepseek-harness-0.1.6', 'deepseek-harness']) {
+    const candidate = path.join(os.homedir(), name)
+    if (fs.existsSync(path.join(candidate, 'apps', 'cli', 'lib', 'bin.js'))) return candidate
+  }
+  return ''
+}
 const config = {
   port: 3198, attachExisting: false, spawnIfMissing: true,
-  checkout: process.env.DSH_CHECKOUT ?? '', command: '',
+  checkout: defaultCheckout(), command: '',
   extraArgs: [], autoOpen: false, followWorkspace: true, stopOnExit: true,
   // The manifest default: the launch chain must pass the same hardening the
   // managed launcher does, whatever started the server.

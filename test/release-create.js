@@ -35,6 +35,32 @@ function notesFor(v) {
   return body + '\n\n安装:下载下方 ' + vsixName + ',VS Code 扩展面板 → ... → 从 VSIX 安装。';
 }
 
+// Asset uploads go to the release's own upload_url (uploads.github.com);
+// posting them to api.github.com answers 404.
+function upload(uploadUrl, name, bytes) {
+  const target = new URL(uploadUrl.replace(/\{.*\}/, '') + '?name=' + encodeURIComponent(name));
+  return new Promise((resolve, reject) => {
+    const req = https.request({
+      host: target.hostname,
+      path: target.pathname + target.search,
+      method: 'POST',
+      headers: {
+        Authorization: 'Bearer ' + readToken(),
+        'User-Agent': 'dsh-release',
+        'Content-Type': 'application/octet-stream',
+        'Content-Length': bytes.length,
+      },
+    }, (res) => {
+      let d = '';
+      res.on('data', (c) => { d += c });
+      res.on('end', () => { if (res.statusCode >= 400) reject(new Error('HTTP ' + res.statusCode + ' ' + d.slice(0, 300))); else resolve(JSON.parse(d)) });
+    });
+    req.on('error', reject);
+    req.write(bytes);
+    req.end();
+  });
+}
+
 function api(method, path, headers, body) {
   return new Promise((resolve, reject) => {
     const req = https.request({ host: 'api.github.com', path, method, headers: { Authorization: 'Bearer ' + readToken(), 'User-Agent': 'dsh-release', ...headers } }, (res) => {
@@ -69,6 +95,6 @@ function api(method, path, headers, body) {
   const existing = (rel.assets || []).find((a) => a.name === vsixName);
   if (existing) { await api('DELETE', '/repos/' + REPO + '/releases/assets/' + existing.id, {}); console.log('old asset deleted'); }
   const vsix = fs.readFileSync(vsixPath);
-  const asset = await api('POST', '/repos/' + REPO + '/releases/' + rel.id + '/assets?name=' + vsixName, { 'Content-Type': 'application/octet-stream', 'Content-Length': vsix.length }, vsix);
+  const asset = await upload(rel.upload_url, vsixName, vsix);
   console.log('asset:', asset.browser_download_url, 'size=' + asset.size);
 })().catch((e) => { console.error('ERR', e.message); process.exit(1) });

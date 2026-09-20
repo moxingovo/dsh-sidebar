@@ -1,4 +1,4 @@
-# 架构说明(DSH Web Panel)
+# 架构说明(DSH Sidebar)
 
 本扩展把 DeepSeek Harness 的**服务端协议**直接暴露为 VS Code 原生侧边栏,
 不内嵌网页、不复刻 WebUI、不引入第二个 Gateway。三层结构:

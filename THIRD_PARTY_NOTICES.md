@@ -1,6 +1,6 @@
 # Third-party notices
 
-本扩展(**dsh-webview / DSH Web Panel**)的运行时**不打包任何第三方依赖**:
+本扩展(**dsh-webview / DSH Sidebar**)的运行时**不打包任何第三方依赖**:
 扩展宿主只用 Node.js 内置模块(`http` / `child_process` / `crypto` 等),
 webview 前端为自写代码,CSS 仅使用 VS Code 主题变量。因此本扩展自身不
 再分发任何第三方代码。

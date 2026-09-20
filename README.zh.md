@@ -1,4 +1,4 @@
-# DSH Web Panel
+# DSH Sidebar
 
 [English](README.md) | **简体中文** · [更新日志](CHANGELOG.md) · [下载安装包](https://github.com/moxingovo/dsh-sidebar/releases)
 
@@ -8,7 +8,7 @@
 
 > 非官方社区扩展,与 DeepSeek 无关。
 
-<p align="center"><a href="media/demo-panel.png"><img src="media/demo-panel.png" alt="DSH Web Panel:VS Code 里的 Claude Code 风格 DSH 侧边栏(截图)" width="440"></a></p>
+<p align="center"><a href="media/demo-panel.png"><img src="media/demo-panel.png" alt="DSH Sidebar:VS Code 里的 Claude Code 风格 DSH 侧边栏(截图)" width="440"></a></p>
 
 <sub>看不到截图?多半是网络访问不了 <code>raw.githubusercontent.com</code> —— 直接打开 <a href="media/demo-panel.png">media/demo-panel.png</a>,或用 <a href="https://cdn.jsdelivr.net/gh/moxingovo/dsh-sidebar@main/media/demo-panel.png">jsDelivr 镜像</a>。</sub>
 

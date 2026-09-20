@@ -110,7 +110,7 @@
       ]
     },
     "configuration": {
-      "title": "DSH Web Panel",
+      "title": "DSH Sidebar",
       "properties": {
         "dshWeb.port": {
           "type": "number",

@@ -43,8 +43,12 @@ git push -u origin main
 
 ## 2. 仓库首页设置（让项目好找）
 
-- **About 描述**（点仓库页右侧齿轮）：`Embed DeepSeek Harness (dsh) web GUI in VS Code — zero-config auto-start, workspace follow, self-healing. 在 VS Code 里内嵌 DeepSeek Harness 网页版，零配置自动启动、多工作区跟随、掉线自愈。`
-- **Topics**（标签，加 `dsh-plugin` 会被官方生态收录）：`dsh-plugin` `deepseek-harness` `deepseek` `vscode-extension` `vscode` `webview`
+v0.6.2 实际在用的（点仓库页右侧齿轮改；GitHub 的 About 上限 350 字符，中英双语已用掉 ~334）：
+
+- **About 描述**：`Claude Code-style native DeepSeek Harness sidebar for VS Code: self-written chat UI (no iframe) reusing the existing dsh web service — workspace-synced sessions, sandbox-permission/model/reasoning pickers, context ring. / VS Code 里的 Claude Code 风格 DeepSeek Harness 原生侧边栏：自写聊天 UI（无 iframe），复用现有 dsh web 服务；工作区会话同步、沙箱权限/模型/推理档选择、上下文占用环。`
+  下次要改的话记得带 `Unofficial community extension` / `非官方社区扩展` 字样（README 里已声明非官方），并留意 350 字符上限。
+- **Topics**：`ai-chat` `deepseek` `deepseek-harness` `dsh-plugin` `sidebar` `vscode` `vscode-extension`（`dsh-plugin` 会被官方生态收录；可再加 `webview`）。
+- **Social preview**（Settings → General → Social preview → Upload an image）：传 `media/demo-panel.png`，别人分享仓库链接时就能看到面板截图。
 
 ## 3. 发布安装包到 Releases
 

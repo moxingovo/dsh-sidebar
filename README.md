@@ -13,9 +13,9 @@ front-end (no iframe) that reuses your existing dsh web service
 > events plus process-local assistant frames). For DeepSeek Harness **0.1.0–0.1.5**
 > use release **0.5.0**; the two wires are not interchangeable.
 
-<p align="center"><a href="media/demo-panel.png"><img src="media/demo-panel.png" alt="DSH Sidebar: a Claude Code-style DSH sidebar inside VS Code (screenshot)" width="440"></a></p>
+<p align="center"><a href="media/demo-panel.png"><img src="https://cdn.jsdelivr.net/gh/moxingovo/dsh-sidebar@main/media/demo-panel.png" alt="DSH Sidebar: a Claude Code-style DSH sidebar inside VS Code (screenshot)" width="440"></a></p>
 
-<sub>Screenshot not loading? Your network may block <code>raw.githubusercontent.com</code> — open <a href="media/demo-panel.png">media/demo-panel.png</a> or the <a href="https://cdn.jsdelivr.net/gh/moxingovo/dsh-sidebar@main/media/demo-panel.png">jsDelivr mirror</a>.</sub>
+<sub>The screenshot is served through the jsDelivr CDN because GitHub's own image host (<code>raw.githubusercontent.com</code>) is unreachable on some networks — e.g. mainland China. Source file: <a href="media/demo-panel.png">media/demo-panel.png</a>.</sub>
 
 - **Look (Claude Code style)**: the header shows **the open conversation's name**
   with only two round buttons at its right — session list and new chat; the bottom

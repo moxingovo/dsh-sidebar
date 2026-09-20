@@ -8,9 +8,9 @@
 
 > 非官方社区扩展,与 DeepSeek 无关。
 
-<p align="center"><a href="media/demo-panel.png"><img src="media/demo-panel.png" alt="DSH Sidebar:VS Code 里的 Claude Code 风格 DSH 侧边栏(截图)" width="440"></a></p>
+<p align="center"><a href="media/demo-panel.png"><img src="https://cdn.jsdelivr.net/gh/moxingovo/dsh-sidebar@main/media/demo-panel.png" alt="DSH Sidebar:VS Code 里的 Claude Code 风格 DSH 侧边栏(截图)" width="440"></a></p>
 
-<sub>看不到截图?多半是网络访问不了 <code>raw.githubusercontent.com</code> —— 直接打开 <a href="media/demo-panel.png">media/demo-panel.png</a>,或用 <a href="https://cdn.jsdelivr.net/gh/moxingovo/dsh-sidebar@main/media/demo-panel.png">jsDelivr 镜像</a>。</sub>
+<sub>截图走 jsDelivr CDN:GitHub 自己的图床 <code>raw.githubusercontent.com</code> 在部分网络(如国内直连)访问不了,所以不用相对路径。源文件仍在仓库里:<a href="media/demo-panel.png">media/demo-panel.png</a>。</sub>
 
 - **界面(Claude Code 风格)**:顶栏左侧是**当前对话的名字**,右侧只有会话列表与新建会话两个圆钮;底部功能区整块一圈 DeepSeek 蓝描边,输入区与工具行之间一条分隔线,药丸/发送键/占用环同比放大。
 - **空白会话与草稿**:新建对话没发消息就切走,它不会占着列表;在里面打了字则会被留下(草稿按会话记账,切回来原样还在,也不会串到别的会话),下次点"新建"优先复用那个空会话而不是再造一个。

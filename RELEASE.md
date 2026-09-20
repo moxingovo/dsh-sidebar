@@ -1,6 +1,6 @@
 # 发布指南 / Release Guide
 
-把 dsh-web-panel 发布到 GitHub（含 .vsix 安装包）的全流程。发布前安全自查：
+把 dsh-sidebar 发布到 GitHub（含 .vsix 安装包）的全流程。发布前安全自查：
 
 - 只上传 **dsh-webview 这个文件夹** 里的内容（git 仓库必须建在 dsh-webview 内，不能建在上一级
   ds_harness 目录——上一级有交接文档、npm 缓存等私人文件）。
@@ -10,10 +10,10 @@
 ## 0. 准备（一次性）
 
 1. 登录 github.com → 右上角 **New repository**：
-   - Repository name：`dsh-web-panel`
+   - Repository name：`dsh-sidebar`
    - 类型：**Public**
    - **不要**勾选 "Add a README file" / .gitignore / license（我们自带）
-   - 点 **Create repository**，复制仓库地址 `https://github.com/moxingovo/dsh-web-panel.git`
+   - 点 **Create repository**，复制仓库地址 `https://github.com/moxingovo/dsh-sidebar.git`
      （用户名如果不是 moxingovo 请替换，同时把 package.json 里 repository 的地址一起改掉）
 2. （建议）github.com → Settings → Emails → 勾选 "Keep my email addresses private"，
    把 git 邮箱换成页面给的 noreply 邮箱，避免公开仓库里出现你的 QQ 邮箱。
@@ -33,7 +33,7 @@ git init
 git add .
 git commit -m "v0.2.1: embed DeepSeek Harness web GUI in VS Code"
 git branch -M main
-git remote add origin https://github.com/moxingovo/dsh-web-panel.git
+git remote add origin https://github.com/moxingovo/dsh-sidebar.git
 git push -u origin main
 \`\`\`
 

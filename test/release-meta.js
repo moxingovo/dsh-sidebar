@@ -10,7 +10,7 @@ const body = JSON.stringify({
 });
 const req = https.request({
   host: 'api.github.com',
-  path: '/repos/moxingovo/dsh-web-panel',
+  path: '/repos/moxingovo/dsh-sidebar',
   method: 'PATCH',
   headers: {
     Authorization: 'Bearer ' + token,

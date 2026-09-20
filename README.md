@@ -1,5 +1,7 @@
 # DSH Web Panel
 
+**English** | [简体中文](README.zh.md) · [Changelog](CHANGELOG.md) · [Releases](https://github.com/moxingovo/dsh-sidebar/releases)
+
 A **Claude Code-style native DSH sidebar** for VS Code: a self-written native
 front-end (no iframe) that reuses your existing dsh web service
 (127.0.0.1:3080 by default) and `~/.dsh` — no second gateway, no server changes.
@@ -11,7 +13,9 @@ front-end (no iframe) that reuses your existing dsh web service
 > events plus process-local assistant frames). For DeepSeek Harness **0.1.0–0.1.5**
 > use release **0.5.0**; the two wires are not interchangeable.
 
-<p align="center"><img src="media/demo-panel.png" alt="DSH Web Panel: a Claude Code-style DSH sidebar inside VS Code" width="440"></p>
+<p align="center"><a href="media/demo-panel.png"><img src="media/demo-panel.png" alt="DSH Web Panel: a Claude Code-style DSH sidebar inside VS Code (screenshot)" width="440"></a></p>
+
+<sub>Screenshot not loading? Your network may block <code>raw.githubusercontent.com</code> — open <a href="media/demo-panel.png">media/demo-panel.png</a> or the <a href="https://cdn.jsdelivr.net/gh/moxingovo/dsh-sidebar@main/media/demo-panel.png">jsDelivr mirror</a>.</sub>
 
 - **Look (Claude Code style)**: the header shows **the open conversation's name**
   with only two round buttons at its right — session list and new chat; the bottom
@@ -34,7 +38,7 @@ front-end (no iframe) that reuses your existing dsh web service
 - **Protocol**: 0.1.6 Typert gateway — `POST /api/<ns>/<method>` with named args,
   a browser-session cookie minted from the launch token, and one `/api/remote.mux`
   socket carrying every stream (session follow, workspace baseline, `$events`) —
-  see [docs/protocol.md](https://github.com/moxingovo/dsh-web-panel/blob/HEAD/docs/protocol.md).
+  see [docs/protocol.md](https://github.com/moxingovo/dsh-sidebar/blob/HEAD/docs/protocol.md).
 
 ## Install
 
@@ -156,4 +160,4 @@ the user as `server rejected response to undefined`.
 
 ## License
 
-MIT — see [LICENSE](https://github.com/moxingovo/dsh-web-panel/blob/HEAD/LICENSE).
+MIT — see [LICENSE](https://github.com/moxingovo/dsh-sidebar/blob/HEAD/LICENSE).

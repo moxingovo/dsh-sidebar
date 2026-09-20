@@ -5,7 +5,7 @@ const token = fs.readFileSync(process.env.TEMP + '\\dsh-token.txt', 'utf8').trim
 const body = JSON.stringify({ names: ['deepseek', 'deepseek-harness', 'dsh-plugin', 'vscode', 'vscode-extension', 'sidebar', 'ai-chat'] });
 const req = https.request({
   host: 'api.github.com',
-  path: '/repos/moxingovo/dsh-web-panel/topics',
+  path: '/repos/moxingovo/dsh-sidebar/topics',
   method: 'PUT',
   headers: {
     Authorization: 'Bearer ' + token,

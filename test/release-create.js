@@ -6,7 +6,7 @@
 const fs = require('fs');
 const https = require('node:https');
 
-const REPO = 'moxingovo/dsh-web-panel';
+const REPO = 'moxingovo/dsh-sidebar';
 const version = JSON.parse(fs.readFileSync(__dirname + '/../package.json', 'utf8')).version;
 const tag = 'v' + version;
 const vsixName = 'dsh-webview-' + version + '.vsix';

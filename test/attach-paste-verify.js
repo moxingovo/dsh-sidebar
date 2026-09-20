@@ -177,8 +177,10 @@ const openSession = () => {
   check('the file picker lands in the tray', chipLabels().some((l) => l.startsWith('picked.png')), JSON.stringify(chipLabels()))
 
   console.log('--- limits that the server did not publish ---')
-  const beforeNoLimits = chipLabels().length
+  // 待发附件现在按会话记账(切走归档、切回来放回,见 panel-fixes-verify):
+  // 换会话会把托盘清空,所以基线必须在切换之后取。
   send({ type: 'sessionOpened', sessionId: SID + '-b', hasMore: false, blank: false, events: [] })
+  const beforeNoLimits = chipLabels().length
   paste([file('big.png', 'image/png', LIMITS.maxImageBytes + 1000)])
   await tick()
   check('without an imageLimits projection the local ceiling is skipped',

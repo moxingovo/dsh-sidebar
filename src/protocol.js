@@ -379,8 +379,22 @@ class DshClient {
     }
     const existing = this.follows.get(sessionId)
     if (existing && !existing.closed) existing.close()
+    // 同一时刻只跟一个会话:切走之后旧 follow 还挂着,它的帧会一直被推过来、服务端
+    // 也一直在为它序列化 —— 访问过的会话越多,这份开销只增不减。
+    for (const [id, other] of this.follows) {
+      if (id !== sessionId && !other.closed) other.close()
+    }
     return new Promise((resolve, reject) => {
       let settled = false
+      // 连接掉了也必须给这次"打开"一个交代:onClose/onError 只 emit down,不会 settle
+      // 这个 Promise —— 否则点开会话会永远悬着,面板既没有新会话也不报错。
+      const onDown = () => {
+        if (settled) return
+        settled = true
+        this.off('down', onDown)
+        reject(new RpcError('stream', 'mux socket closed while opening the session'))
+      }
+      this.on('down', onDown)
       const stream = this.openStream('session/follow', {
         request: { address: { kind: 'session', sessionId }, assistantStream: true },
       }, {
@@ -397,6 +411,7 @@ class DshClient {
             }
             if (!settled) {
               settled = true
+              this.off('down', onDown)
               resolve({ events: frame.records || [], hasMore: !!frame.hasMore, projections: frame.projections || null })
             }
             return
@@ -411,11 +426,22 @@ class DshClient {
             this.emit('mux', { type: 'session/event', sessionId, event })
           }
         },
-        onError: (error) => { if (!settled) { settled = true; reject(new RpcError('stream', 'session/follow failed: ' + jsonBody(error))) } },
-        onEnd: () => { if (!settled) { settled = true; reject(new RpcError('stream', 'session/follow ended before its snapshot')) } },
+        onError: (error) => { if (!settled) { settled = true; this.off('down', onDown); reject(new RpcError('stream', 'session/follow failed: ' + jsonBody(error))) } },
+        onEnd: () => { if (!settled) { settled = true; this.off('down', onDown); reject(new RpcError('stream', 'session/follow ended before its snapshot')) } },
       })
       this.follows.set(sessionId, stream)
     })
+  }
+
+  /**
+   * Stop following one Session (the panel closed it). Without this the follow stream
+   * stays subscribed for the life of the connection, pushing frames nobody renders.
+   * @param sessionId - session whose follow should be cancelled.
+   */
+  closeFollow(sessionId) {
+    const stream = this.follows.get(sessionId)
+    if (stream && !stream.closed) stream.close()
+    this.follows.delete(sessionId)
   }
 
   /** Answer a pending host→client waterfall (approval/question) via $events/result. */

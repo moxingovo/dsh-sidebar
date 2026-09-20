@@ -16,6 +16,14 @@
     dshHome: null,
     sessions: [],
     archived: new Set(),
+    // 用户在输入框里打过字、因而不该被自动清掉的空白会话(见 releaseBlankOpenSession)
+    keptBlank: new Set(),
+    // sessionId -> 输入框草稿:面板只有一个 textarea,草稿按会话记账,切走不丢字
+    drafts: new Map(),
+    // 刚发出、还没被服务端确认的那条消息(失败时放回输入框)
+    lastPrompt: null,
+    // sessionId -> 待发附件(托盘是全局的,不记账就会把 A 的图发到 B)
+    attachStore: new Map(),
     openId: null,
     open: null,
     pending: new Map(),      // rpcId -> { kind, sessionId, payload }
@@ -60,13 +68,13 @@
     const root = el('div', 'dsh-root')
     // Claude Code 风格布局:顶部细条 + 消息区 + 底部圆角输入 + 药丸选择器
     root.innerHTML =
+      // CC 同款顶栏:左侧是当前对话的名字(不再是品牌+版本号),右侧只保留
+      // 会话列表与新建会话两个圆钮;底边分隔线由 .dsh-header 自己画。
       '<header class="dsh-header">' +
-      '  <div class="brand" title="DeepSeek Harness">&#10035; DSH <span class="brand-ver">v0.4.2</span></div>' +
+      '  <div class="hdr-title" id="hdrTitle" title="当前对话"></div>' +
       '  <div class="hdr-actions">' +
       '    <button class="iconbtn" id="btnSessions" title="会话列表">&#9776;</button>' +
       '    <button class="iconbtn" id="btnNewSession" title="新会话">&#10010;</button>' +
-      '    <button class="iconbtn" id="btnSettings" title="设置">&#9881;</button>' +
-      '    <button class="iconbtn" id="btnCollapse" title="收起面板">&#187;</button>' +
       '  </div>' +
       '</header>' +
       '<section class="dsh-sessionbar" hidden>' +
@@ -79,6 +87,7 @@
       '  <div class="dsh-empty" hidden></div>' +
       '  <div class="dsh-composer">' +
       '    <div class="composer-card">' +
+      '      <div id="dsh-queue" hidden></div>' +
       '      <div class="attach-tray" hidden></div>' +
       '      <input type="file" id="attachInput" class="attach-input" accept="image/png,image/jpeg,image/webp,image/gif" multiple hidden>' +
       '      <textarea class="dsh-input" rows="1" placeholder="输入消息,Enter 发送,Shift+Enter 换行(图片可粘贴/拖入)"></textarea>' +
@@ -95,7 +104,7 @@
       '        </div>' +
       '        <div class="cc-right">' +
       '          <div class="context-meter">' +
-      '            <button class="cm-ring" id="cmRing" title="上下文占用"><svg viewBox="0 0 14 14" width="15" height="15"><circle class="cm-track" cx="7" cy="7" r="5.5"/><circle class="cm-arc" cx="7" cy="7" r="5.5" transform="rotate(-90 7 7)"/></svg></button>' +
+      '            <button class="cm-ring" id="cmRing" title="上下文占用"><svg viewBox="0 0 14 14" width="18" height="18"><circle class="cm-track" cx="7" cy="7" r="5.5"/><circle class="cm-arc" cx="7" cy="7" r="5.5" transform="rotate(-90 7 7)"/></svg></button>' +
       '            <div class="cm-panel" hidden></div>' +
       '          </div>' +
       '          <button class="sendbtn" id="btnSend" title="发送">&#8593;</button>' +
@@ -106,6 +115,8 @@
       '</main>' +
       '<aside class="dsh-settings" hidden></aside>'
     app.appendChild(root)
+    // 顶栏标题先落一次初值:首帧不能是一条空顶栏(真正的名字等 sessionList 到达)
+    renderHeaderTitle()
     const sbToggle = $('.sb-toggle')
     if (sbToggle) sbToggle.addEventListener('click', () => closeSessionBar())
     bindHeader()
@@ -166,6 +177,22 @@
     return '权限:—'
   }
 
+  /**
+   * 新建会话请求。把"当前这个会话已经聊过了"一并告诉宿主:宿主的空白会话列表是
+   * 一次 listSessions 的快照(为了不卡),陈旧的 blank 标记会让它把已经聊过的会话
+   * 当成空白会话复用 —— 那样点"新建"会毫无反应。
+   * @param extra - 额外字段(如 agentPreset)。
+   */
+  function requestNewSession(extra) {
+    const stale = S.openId && !isBlankOpenSession() ? S.openId : null
+    post({
+      type: 'createSession',
+      cwd: S.wsPath,
+      ...(stale ? { excludeSessionId: stale } : {}),
+      ...(extra || {}),
+    })
+  }
+
   function noSessionMenu(anchor, label) {
     pillMenu(anchor, [
       { label: '还没有打开会话', meta: '药丸作用于当前打开的会话', value: undefined },
@@ -173,7 +200,7 @@
     ], (v) => {
       if (v === 'create') {
         S.pendingPill = label
-        post({ type: 'createSession', cwd: S.wsPath })
+        requestNewSession()
       }
     })
   }
@@ -264,9 +291,10 @@
       const bar = sessionBar()
       if (bar) bar.hidden = !bar.hidden
     })
-    $('#btnNewSession').addEventListener('click', () => post({ type: 'createSession', cwd: S.wsPath }))
-    $('#btnSettings').addEventListener('click', () => { S.settingsOpen = !S.settingsOpen; renderSettings() })
-    $('#btnCollapse').addEventListener('click', () => post({ type: 'collapse' }))
+    $('#btnNewSession').addEventListener('click', () => requestNewSession())
+    // 顶栏不再放设置/收起两个钮(按用户要求删掉)。设置浮层本身保留,只是改由
+    // 命令面板(dshPanel.restartServer / dshPanel.openBrowser)与后续入口触发;
+    // 面板的收起交给 VS Code 自己的视图控件。
     $('#permPill').addEventListener('click', (e) => buildPermMenu(e.currentTarget))
     $('#modelPill').addEventListener('click', (e) => {
       // 立即用缓存打开菜单(零等待);后台刷新只更新药丸标签,不重建菜单
@@ -316,7 +344,7 @@
     })
     input.addEventListener('input', () => {
       input.style.height = 'auto'
-      input.style.height = Math.min(200, input.scrollHeight) + 'px'
+      input.style.height = Math.min(240, input.scrollHeight) + 'px'
     })
     $('#btnSend').addEventListener('click', () => {
       // 运行中点击 = 停止;空闲时点击 = 发送(harness 同款单按钮)
@@ -435,16 +463,44 @@
     // Identity is the sequence number, not the name: two pasted screenshots are
     // both called "image.png", and de-duplicating by name dropped the wrong chip.
     const id = ++attachSeq
-    attachments.push({ id, name, bytes: file.size, part: { type: 'image', mediaType, data: base64, name } })
+    const entry = { id, name, bytes: file.size, part: { type: 'image', mediaType, data: base64, name } }
+    attachments.push(entry)
+    renderAttachmentChip(entry)
+    return true
+  }
+
+  /** 画一枚附件药丸(新加入和切回会话恢复时共用)。 */
+  function renderAttachmentChip(a) {
     const tray = $('.attach-tray')
-    const chip = el('span', 'attach-chip', name + ' · ' + fmtBytes(file.size))
-    chip.title = mediaType + ' · ' + fmtBytes(file.size) + ' — 点击 × 移除'
+    if (!tray) return
+    const chip = el('span', 'attach-chip', a.name + ' · ' + fmtBytes(a.bytes))
+    chip.title = a.part.mediaType + ' · ' + fmtBytes(a.bytes) + ' — 点击 × 移除'
     const x = el('button', 'chip-x', '×')
-    x.addEventListener('click', () => removeAttachment(id))
+    x.addEventListener('click', () => removeAttachment(a.id))
     chip.appendChild(x)
     tray.appendChild(chip)
     tray.hidden = false
-    return true
+  }
+
+  /**
+   * 附件也按会话记账(与草稿同一套做法)。托盘只有一个,不记账的话:在 A 里贴好的图,
+   * 切到 B 之后会跟着 B 的第一条消息发出去 —— 发错对象,而且 A 那边的图也没了。
+   * @param sessionId - 要离开的会话。
+   */
+  function stashAttachments(sessionId) {
+    if (!sessionId) return
+    if (attachments.length > 0) S.attachStore.set(sessionId, attachments.slice())
+    else S.attachStore.delete(sessionId)
+  }
+
+  /** 切回某个会话时把它的待发附件放回托盘。 */
+  function restoreAttachments(sessionId) {
+    clearAttachments()
+    const saved = S.attachStore.get(sessionId) || []
+    for (const a of saved) {
+      attachments.push(a)
+      renderAttachmentChip(a)
+    }
   }
 
   function removeAttachment(id) {
@@ -535,11 +591,10 @@
         break
       case 'sessionList':
         S.sessions = m.items || []
-        // Only replace the archive set with an authoritative answer. The host omits
-        // `archivedIds` when it could not read it, and an empty array is not treated as
-        // "nothing is archived" because that would resurrect every archived
-        // conversation into the drawer on one failed call.
-        if (Array.isArray(m.archivedIds) && m.archivedIds.length > 0) {
+        // 宿主读不到归档集合时会整个省略 `archivedIds`(见 extension.js),所以字段在
+        // 就是权威结果 —— 包括空数组(否则在别处取消归档最后一个会话后,这里永远
+        // 还把它当归档的藏着)。
+        if (Array.isArray(m.archivedIds)) {
           S.archived = new Set(m.archivedIds)
         }
         if (m.workspacePath) S.wsPath = m.workspacePath
@@ -552,6 +607,10 @@
         }
         break
       case 'sessionCreated':
+        // 复用同一个空白会话时(工作区里已经有一个空的新会话),它本来就是当前会话:
+        // 再 openSession 一次会把 history/models/presets 整套重拉、整屏重绘 ——
+        // 这就是"反复点新建会卡"的另一半。药丸那条"新建并继续"需要这次打开来弹菜单。
+        if (m.sessionId === S.openId && !S.pendingPill) break
         post({ type: 'openSession', sessionId: m.sessionId })
         break
       case 'sessionOpened':
@@ -579,12 +638,14 @@
         try { onFrame(m.kind, m.frame) } catch (err) { console.error('[frame-error]', err && err.stack || err) }
         break
       case 'promptAccepted':
+        S.lastPrompt = null   // 服务端收下了,不用再留着原文
         // 药丸触发的计划模式切换走静默通道:不渲染任何命令行/结果行
         if (m.command && m.command.text && !S.silentCommand) pushSystemRow(m.command.text)
         S.silentCommand = false
         break
       case 'cancelled':
-        pushSystemRow('已停止')
+        // 停止的是抽屉里另一个会话时,别把「已停止」写到当前屏上的这段对话里。
+        if (m.sessionId === undefined || m.sessionId === S.openId) pushSystemRow('已停止')
         break
       case 'modelSelected':
         if (S.open && S.open.models) S.open.models.current = m.selected
@@ -616,7 +677,10 @@
         }
         break
       case 'sessionArchived':
-        S.archived = new Set(m.archivedIds || [])
+        // 回执没带集合时(服务端没回 archivedSessionIds)只加这一个 id,
+        // 不能把整个集合清空 —— 那会让所有已归档会话立刻回到列表里。
+        if (Array.isArray(m.archivedIds)) S.archived = new Set(m.archivedIds)
+        else S.archived.add(m.sessionId)
         removeSessionRow(m.sessionId)
         break
       case 'sessionForked':
@@ -627,9 +691,27 @@
         S.dshHome = m.dshHome
         renderSettings()
         break
-      case 'error':
+      case 'error': {
+        // 发送失败的兜底:输入框在点发送时就清空了,而这条消息服务端没收下 ——
+        // 把原文放回去。只在输入框还空着、且失败的就是当前会话刚发的那条时动手,
+        // 免得覆盖用户已经开始写的下一条。
+        const failed = S.lastPrompt && S.lastPrompt.sessionId === S.openId
+        if (m.kind === 'session.prompt' && failed) {
+          const { text } = S.lastPrompt
+          S.lastPrompt = null
+          const input = $('.dsh-input')
+          if (text && input && input.value === '') {
+            input.value = text
+            input.style.height = 'auto'
+            input.style.height = Math.min(240, input.scrollHeight) + 'px'
+            S.drafts.set(S.openId, text)
+            pushSystemRow('错误: ' + m.message + '(原文已放回输入框)')
+            break
+          }
+        }
         pushSystemRow('错误: ' + m.message)
         break
+      }
       case 'reload':
         post({ type: 'boot' })
         break
@@ -669,11 +751,36 @@
     // on `origin`, because a fork also carries parentSessionId but must stay.
     let items = S.sessions.filter((s) => !S.archived.has(s.sessionId) && s.origin !== 'subagent')
     if (!S.showAllSessions && ws && S.wsPath) items = items.filter((s) => pathNorm(s.cwd) === ws)
+    // 空白会话(建了没发过消息)不占列表位:只有当前打开的那个、以及用户在输入框里
+    // 打过字留档的才显示 —— 与 harness 的规则一致(它也只给当前空白会话留一行)。
+    // 于是"新建一个不说话的对话再切走"就自然从列表里消失,不用真的删服务端文件。
+    items = items.filter((s) => !s.blank || s.sessionId === S.openId || S.keptBlank.has(s.sessionId))
     items = items.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
     return items
   }
 
+  /**
+   * 顶栏左侧的标题:当前对话的名字(Claude Code 的页签语义),不再是品牌+版本号。
+   * 优先级与列表行一致 —— 打开会话的实时标题 > 列表里的改名/标题投影 > 会话名。
+   */
+  function renderHeaderTitle() {
+    const node = $('#hdrTitle')
+    /* v8 ignore next -- 骨架里恒有该节点;守卫只防 boot 之前的早调。 */
+    if (!node) return
+    const it = S.sessions.find((s) => s.sessionId === S.openId) || null
+    const open = S.open && S.openId ? S.open : null
+    const projTitle = it && it.projections && it.projections.values ? it.projections.values.title : null
+    const title = (open && open.title) || (it && (it.title || projTitle || it.name)) || ''
+    // 没有标题时按状态给中性占位:空白会话 → 新会话;已开始但没生成标题 → 未命名会话;
+    // 一个会话都没开 → 产品名(顶栏任何时候都不该是空的)。
+    const blank = Boolean((open && open.blank) || (it && it.blank))
+    node.textContent = title || (blank ? '新会话' : (it || open ? '未命名会话' : 'DeepSeek Harness'))
+    node.title = it && it.cwd ? node.textContent + '\n' + it.cwd : node.textContent
+  }
+
   function renderSessionList() {
+    // 顶栏标题跟列表同源:二者都由会话状态驱动,任何一次列表刷新都顺带修正标题。
+    renderHeaderTitle()
     const list = $('.sb-list')
     clear(list)
     const items = workspaceSessions()
@@ -703,7 +810,7 @@
       const head = el('div', 'sb-titleline')
       const name = el('span', 'sb-name', title || '新会话' + (it.blank ? '' : ' (无标题)'))
       head.appendChild(name)
-      if (it.running) head.appendChild(el('span', 'sb-dot running', '运行中'))
+      if (it.running) head.appendChild(el('span', 'sb-run', '运行中'))
       row.appendChild(head)
       const sub = el('div', 'sb-subline')
       sub.appendChild(el('span', 'sb-time', fmtTime(it.updatedAt)))
@@ -785,6 +892,8 @@
 
   function removeSessionRow(sessionId) {
     S.sessions = S.sessions.filter((s) => s.sessionId !== sessionId)
+    S.drafts.delete(sessionId)
+    S.keptBlank.delete(sessionId)
     dropArchivedOpenSession()
     renderSessionList()
   }
@@ -805,7 +914,74 @@
   }
 
   // ── open session ──────────────────────────────────────────────────────────
+
+  /** 输入框里当前的草稿。 */
+  function composerText() {
+    const input = $('.dsh-input')
+    return input ? input.value : ''
+  }
+
+  /**
+   * 当前打开的会话是不是"还没发过消息的新会话":宿主标的 blank + 本地一行消息都没有,
+   * 且没有在跑、没有排队。发出首条消息后 blank 与回显都可能短暂滞后,所以这三个本地
+   * 条件一起看 —— 宁可多留一个空壳,也不能把用户刚发出去的对话当成空会话。
+   * @returns 是空白新会话时为 true。
+   */
+  function isBlankOpenSession() {
+    const o = S.open
+    return Boolean(o && o.blank && o.rows.length === 0 && !o.busy && o.queue.length === 0)
+  }
+
+  /**
+   * 把输入框里的草稿记到它所属的会话名下。切走时调用 —— 面板只有一个输入框,
+   * 不记账的话草稿会跟着人跑到别的会话里(发送时就发错了对象),而在空白会话里
+   * 打了一半的字也可能被清掉。留空等于删除该会话的草稿。
+   * @param sessionId - 草稿属于哪个会话。
+   */
+  function saveDraft(sessionId) {
+    if (!sessionId) return
+    const text = composerText()
+    if (text.trim() === '') S.drafts.delete(sessionId)
+    else S.drafts.set(sessionId, text)
+  }
+
+  /** 换回某个会话时把它的草稿放回输入框(高度跟着重算)。 */
+  function restoreDraft(sessionId) {
+    const input = $('.dsh-input')
+    if (!input) return
+    input.value = S.drafts.get(sessionId) || ''
+    input.style.height = 'auto'
+    input.style.height = Math.min(240, input.scrollHeight) + 'px'
+  }
+
+  /**
+   * 离开一个还没发过消息的新会话(harness 的 blank 会话)时的收尾:
+   *   · 输入框里没有新写的字(也没有待发附件)→ 该会话从列表里清掉,等同于"退出即删除";
+   *   · 写了字 → 记进 keptBlank,它继续留在列表里等用户回来接着写。
+   * 服务端没有 session 删除接口(只有 workspace.archiveSession),而 harness 自己也是
+   * 只隐藏空白会话 + 下次新建时复用,所以这里同样只做"从列表清掉"这件事:
+   * 宿主侧的 createSession 会优先复用空白会话,不会越攒越多。
+   * @param nextId - 即将打开的会话 id;与当前相同(比如重复点新建)时什么都不做。
+   */
+  function releaseBlankOpenSession(nextId) {
+    const o = S.open
+    const id = S.openId
+    if (!o || !id || id === nextId) return
+    if (!isBlankOpenSession()) return
+    const typed = composerText().trim() !== String(o.draftAtOpen || '').trim()
+    if (typed || attachments.length > 0) {
+      S.keptBlank.add(id)
+      return
+    }
+    S.keptBlank.delete(id)
+  }
+
   function openSessionView(m) {
+    // 先给上一个会话收尾,再切过去:此刻 S.open/S.openId 还是"上一个"。
+    // 草稿先落账(输入框里的字不动),releaseBlankOpenSession 才能按"这次打了没"判断。
+    saveDraft(S.openId)
+    stashAttachments(S.openId)
+    releaseBlankOpenSession(m.sessionId)
     S.openId = m.sessionId
     S.open = {
       id: m.sessionId,
@@ -819,6 +995,7 @@
       preset: null,
       projections: m.projections ? m.projections.values || {} : {},
       projectionAsOf: m.projections ? m.projections.asOfSeq : -1,
+      projectionSeq: {},   // 每个投影 key 各自的已应用 seq(见 applyProjection)
       permissions: (m.projections && m.projections.values && m.projections.values.permissions) || null,
       busy: false,
       queue: [],
@@ -826,6 +1003,9 @@
       timeline: [],
       stream: null,
       contextWindow: null,
+      // 打开这一刻的草稿快照(= 本会话自己存的草稿),离开时只有比它多出来的字
+      // 才算"在新会话里打的字"
+      draftAtOpen: S.drafts.get(m.sessionId) || '',
     }
     // 预设直接取自会话列表项(session.list 每项带 agentPreset),不依赖历史事件窗口
     const listItem = S.sessions.find((s) => s.sessionId === m.sessionId)
@@ -841,7 +1021,14 @@
     // 历史折叠可能落在 turn/start 之后(turn/end 被截断)——不要因此卡亮停止按钮;
     // 若会话确实在跑,后续 live 帧会重新置位 busy。
     S.open.busy = false
+    // 换会话必须重新跟随到底部:S.needScroll 记录的是用户有没有贴着底部,是全局的;
+    // 上一个会话里往上翻过一次,就会让之后每个会话都停在最老那条消息上、直播也不再跟随。
+    S.needScroll = true
     renderAll()
+    // 切回来时把本会话自己的草稿与待发附件放回输入框:在空白新会话里打了一半的字,
+    // 回来还在;图也不会跑到别的会话去。
+    restoreDraft(m.sessionId)
+    restoreAttachments(m.sessionId)
     post({ type: 'lastSession', sessionId: m.sessionId })
   }
 
@@ -860,7 +1047,7 @@
     if (!S.open) return
     const rows = S.open.rows
     for (const entry of events) {
-      foldEvent(entry.event, entry.view, rows)
+      foldEventAt(entry.event, entry.view, rows)
       // seq 在 event 内部(历史条目形状为 {event:{seq,...}})
       const seq = (entry.event && entry.event.seq) ?? entry.seq
       if (typeof seq === 'number' && seq > (S.open.lastAppliedSeq ?? -1)) S.open.lastAppliedSeq = seq
@@ -869,6 +1056,46 @@
       finalizeStreamingAssistant(S.open.stream.assistant)
       S.open.stream = null
     }
+  }
+
+  /**
+   * foldEvent 的包装:给这次折叠新增的每一行盖上事件的 seq。
+   * 翻页要拿最老一行的 seq 当游标,而旧代码只在按钮回调里读 row._seq —— 从来没有
+   * 地方写过它,于是 beforeSeq 恒为 undefined,session.history 会退回重发开场快照
+   * (整段对话重复一遍)。
+   * @param ev - 会话事件(带 seq)。
+   * @param view - 事件视图(可选)。
+   * @param rows - 目标行数组。
+   */
+  function foldEventAt(ev, view, rows) {
+    const before = rows.length
+    foldEvent(ev, view, rows)
+    if (typeof ev.seq !== 'number') return
+    for (let i = before; i < rows.length; i++) {
+      if (rows[i] && rows[i]._seq === undefined) rows[i]._seq = ev.seq
+    }
+  }
+
+  /**
+   * 「加载更早消息」按钮。没有可用的 seq 游标就不发请求:session.history 收到
+   * beforeSeq: undefined 会被当成没有游标,直接重发开场快照。
+   * @param o - 当前打开的会话状态。
+   * @returns 按钮节点。
+   */
+  function loadMoreButton(o) {
+    const more = el('button', 'btn load-more', '加载更早消息')
+    more.addEventListener('click', () => {
+      const first = o.rows.find((r) => typeof r._seq === 'number')
+      if (!first) {
+        more.disabled = true
+        more.textContent = '更早的消息定位不到(缺少 seq)'
+        return
+      }
+      more.disabled = true
+      more.textContent = '加载中…'
+      post({ type: 'historyMore', sessionId: o.id, beforeSeq: first._seq })
+    })
+    return more
   }
 
   function foldEvent(ev, view, rows) {
@@ -1159,7 +1386,7 @@
           input.value = text
           input.focus()
           input.style.height = 'auto'
-          input.style.height = Math.min(200, input.scrollHeight) + 'px'
+          input.style.height = Math.min(240, input.scrollHeight) + 'px'
         })
         act.appendChild(resend)
         wrap.appendChild(act)
@@ -1538,7 +1765,7 @@
     if (typeof ev.seq === 'number' && ev.seq <= (o.lastAppliedSeq ?? -1)) return
     S.open.lastAppliedSeq = o.lastAppliedSeq = ev.seq
     const beforeLen = o.rows.length
-    foldEvent(ev, view || null, o.rows)
+    foldEventAt(ev, view || null, o.rows)
     for (let i = beforeLen; i < o.rows.length; i++) {
       appendRow(o.rows[i])
     }
@@ -1555,8 +1782,17 @@
   function applyProjection(frame) {
     const o = S.open
     if (!o) return
-    if (o.projectionAsOf !== undefined && frame.seq <= (o.projectionAsOf ?? -1)) return
-    o.projectionAsOf = frame.seq
+    // 按 key 去重,而不是拿一个全局 seq 卡:一次 session/follow 快照会把每个投影
+    // 都用同一个 cursor seq 推过来(protocol.js 的 snapshot 分支),用单个
+    // "已应用到哪个 seq" 会让快照里除第一个以外的投影全被丢掉 —— 重连后权限药丸、
+    // 占用环、图片上限就不再更新了。
+    if (!o.projectionSeq) o.projectionSeq = {}
+    const applied = o.projectionSeq[frame.key]
+    if (typeof frame.seq === 'number') {
+      if (applied !== undefined && frame.seq <= applied) return
+      o.projectionSeq[frame.key] = frame.seq
+      o.projectionAsOf = Math.max(o.projectionAsOf ?? -1, frame.seq)
+    }
     o.projections[frame.key] = frame.value
     if (frame.key === 'tokenUsage' || frame.key === 'contextPressure' || frame.key === 'contextBreakdown') renderContextMeter()
     if (frame.key === 'title' && typeof frame.value === 'string') {
@@ -1685,10 +1921,17 @@
     // The wire part only: the tray entry also carries a local id and a byte count.
     for (const a of attachments) content.push(a.part)
     const busy = S.open && S.open.busy
-    post({ type: 'prompt', sessionId: S.openId, mode: busy ? 'steer' : 'queue', content })
+    const sentTo = S.openId
+    post({ type: 'prompt', sessionId: sentTo, mode: busy ? 'steer' : 'queue', content })
+    // 输入框立刻清空(不等服务端),但留住原文:服务端拒收时(error kind
+    // session.prompt)要把它放回输入框,而不是让用户重打一遍。
+    S.lastPrompt = text ? { sessionId: sentTo, text } : null
     input.value = ''
     input.style.height = 'auto'
+    S.drafts.delete(S.openId)      // 发出去了,这份草稿就不该再留着
+    S.keptBlank.delete(S.openId)   // 有消息了,不需要"打了字别清"的保护了
     clearAttachments()
+    S.attachStore.delete(sentTo)   // 图已经随这条消息发出去了,不必再留着
     // 不做乐观回显:权威 user/message 事件经 mux 流到达后渲染(已按 seq 去重,避免重复/空气泡)
   }
 
@@ -1935,7 +2178,7 @@
     const d = S.describe || {}
     empty.appendChild(el('div', 'empty-tagline', '当前 ' + (d.provider || '—') + ' / ' + (d.model || '—') + (d.version ? ' · 服务 v' + d.version : '')))
     const btn = el('button', 'btn primary', '新会话')
-    btn.addEventListener('click', () => post({ type: 'createSession', cwd: S.wsPath }))
+    btn.addEventListener('click', () => requestNewSession())
     empty.appendChild(btn)
   }
 
@@ -1954,6 +2197,9 @@
       const emptyEl = $('.dsh-empty')
       if (emptyEl) emptyEl.hidden = true
       msg.hidden = false
+      // 开场快照之外还有更早的历史时必须在这里就画出按钮 —— 旧代码只在
+      // prependHistory 里画它,而 prependHistory 只有点了这个按钮才会跑(死锁)。
+      if (o.hasMore) msg.appendChild(loadMoreButton(o))
       for (const row of o.rows) msg.appendChild(renderRow(row))
       if (S.needScroll) msg.scrollTop = msg.scrollHeight
     }
@@ -1972,21 +2218,17 @@
     const saved = o.rows
     o.rows = []
     for (const entry of m.events || []) {
-      foldEvent(entry.event, entry.view, o.rows)
+      foldEventAt(entry.event, entry.view, o.rows)
     }
     o.stream = null
     const newRows = o.rows
     o.rows = saved
     o.hasMore = m.hasMore
     const msg = $('.dsh-messages')
-    if (m.hasMore) {
-      const more = el('button', 'btn load-more', '加载更早消息')
-      more.addEventListener('click', () => {
-        const first = o.rows.find((r) => r._seq)
-        post({ type: 'historyMore', sessionId: o.id, beforeSeq: (first && first._seq) || m.seq })
-      })
-      msg.insertBefore(more, msg.firstChild)
-    }
+    // 旧按钮先摘掉:每次翻页都会新建一个,留着会叠出一排
+    const staleMore = msg.querySelector('.load-more')
+    if (staleMore) staleMore.remove()
+    if (m.hasMore) msg.insertBefore(loadMoreButton(o), msg.firstChild)
     for (let i = newRows.length - 1; i >= 0; i--) {
       const node = renderRow(newRows[i])
       msg.insertBefore(node, msg.firstChild)

@@ -6,11 +6,22 @@ front-end (no iframe) that reuses your existing dsh web service
 
 > Unofficial community extension. Not affiliated with DeepSeek.
 >
-> **Harness compatibility**: 0.6.0 speaks the **0.1.6** wire (Typert API Gateway:
+> **Harness compatibility**: 0.6.x speaks the **0.1.6** wire (Typert API Gateway:
 > cookie-authenticated `/api/<ns>/<method>`, one `remote.mux` WebSocket, durable
 > events plus process-local assistant frames). For DeepSeek Harness **0.1.0–0.1.5**
 > use release **0.5.0**; the two wires are not interchangeable.
 
+<p align="center"><img src="media/demo-panel.png" alt="DSH Web Panel: a Claude Code-style DSH sidebar inside VS Code" width="440"></p>
+
+- **Look (Claude Code style)**: the header shows **the open conversation's name**
+  with only two round buttons at its right — session list and new chat; the bottom
+  function area is one rounded card with a **DeepSeek-blue ring** and a divider
+  between the input and the toolbar, with pills / send button / context ring scaled
+  to match.
+- **Blank sessions & drafts**: a new conversation you leave without sending anything
+  does not occupy a list slot; if you typed something there it stays (drafts are kept
+  per conversation and never leak into another one), and the next "new chat" reuses
+  that empty conversation instead of piling up another one.
 - **Entry points (same as Claude Code)**: the **DeepSeek Harness icon** (DeepSeek
   blue) in the top-right auxiliary bar — click to summon the chat panel; the
   status-bar **DSH** item shows server state and toggles the panel; `Ctrl+Alt+D`.
@@ -30,7 +41,7 @@ front-end (no iframe) that reuses your existing dsh web service
 From a released `.vsix`:
 
 ```
-code --install-extension dsh-webview-0.6.0.vsix
+code --install-extension dsh-webview-0.6.2.vsix
 ```
 
 Or build it yourself (run in the repo root):
@@ -38,7 +49,7 @@ Or build it yourself (run in the repo root):
 ```
 npx @vscode/vsce package
 pwsh -File test\fix-vsix.ps1   # repairs vsce's UTF-8 mangling of package.json
-code --install-extension dsh-webview-0.6.0.vsix
+code --install-extension dsh-webview-0.6.2.vsix
 ```
 
 > ⚠️ Known issue: on some Windows environments `vsce package` re-encodes the
@@ -106,30 +117,42 @@ Fix: `test\fix-state.js` — removes Chat from the global pinned list, registers
 
 ## Development
 
+No build step: plain JS, checked with `node --check` plus a set of regression scripts
+(`test/*.js`; 10 suites carry assertions, 217 checks in total right now).
+
 ```
-node test/respond-wire-verify.js   # permission/question answer wire shape (14 checks, headless)
-node test/approval-card-verify.js  # approval card rendering + dedup (12 checks, jsdom)
-node test/real-launch-verify.js    # spawns the real dsh web server through the launch chain
-node test/spawn-verify.js          # launch-chain (checkout / dsh CLI / npx) checks
+node test/respond-wire-verify.js        # approval/question answer wire shape (18 checks, mock 0.1.6 gateway)
+node test/session-list-filter-verify.js # session-list filtering (workspace / subagent / archived)
+node test/blank-session-verify.js       # blank-session lifecycle + per-session drafts + reuse cache + failed-send restore (31 checks)
+node test/panel-fixes-verify.js         # markdown escaping, queue rendering, archive set, projections, attachments, paging (22 checks)
+node test/header-composer-verify.js     # header & composer structure + style contract (34 checks)
+node test/approval-card-verify.js       # approval card rendering + dedup (35 checks, jsdom)
+node test/live-sync-verify.js           # live event folding (8 checks)
+node test/pill-menu-verify.js           # pill menu lifecycle + listener leaks (11 checks)
+node test/spawn-verify.js               # launch chain (checkout / dsh CLI / npx)
+node test/launch-flags-verify.js        # launch argument assembly
+node test/attach-paste-verify.js        # image attachment paste/drop
+node test/real-launch-verify.js         # spawns the real dsh web server (needs a local checkout; manual)
 ```
 
-`approval-card-verify.js` runs the real `webview/app.js` in jsdom and drives it
-uith the same host messages the extension sends. It pins the field-name contract
-behind the duplicate-card bug: session-log events carry the approval id as
-`data.id`, while server-request frames carry it as `approvalId`; reading only the
-latter makes the id `undefined`, so the log card and the replayed frame render as
-two identical cards and `approval/decided` never settles either. It needs jsdom,
-so point `DSH_CHECKOUT_NODE_MODULES` at a checkout that has one, e.g.
-`$env:DSH_CHECKOUT_NODE_MODULES = '<checkout>\node_modules'`.
+The jsdom-backed suites need `DSH_CHECKOUT_NODE_MODULES` pointing at a `node_modules`
+that has jsdom.
 
-`respond-wire-verify.js` is the regression guard for the sidebar's permission
-buttons: it stands up a fake dsh gateway, activates the extension against it,
-pushes an `approval/*` and a `question/*` frame into the sidebar webview, and
-asserts the `POST /api/respond` envelope. The gateway routes client-responses by
-the echoed `rpcId` and then validates the payload against
-`approvalResponsePayloadSchema` / `questionResponsePayloadSchema`, both of which
-require `sessionId`; a wrong shape is rejected with `{accepted:false}` and
-surfaces to the user as `server rejected response to undefined`.
+`approval-card-verify.js` runs the real `webview/app.js` in jsdom and drives it with
+the same host messages the extension sends. It pins the field-name contract behind
+the duplicate-card bug: session-log events carry the approval id as `data.id`, while
+server-request frames carry it as `approvalId`; reading only the latter makes the id
+`undefined`, so the log card and the replayed frame render as two identical cards and
+`approval/decided` never settles either.
+
+`respond-wire-verify.js` is the regression guard for the sidebar's permission and
+question buttons: it stands up a fake 0.1.6 gateway, activates the extension against
+it, pushes an `approval/*` and a `question/*` waterfall into the sidebar webview, and
+asserts the answer frame that goes back out — `POST /api/$events/result` carrying the
+opening `clientId` and the waterfall `eventId`. The payload is validated against
+`approvalResponsePayloadSchema` / `questionResponsePayloadSchema`, both of which also
+require `sessionId`; a wrong shape is rejected with `{accepted:false}` and surfaces to
+the user as `server rejected response to undefined`.
 
 ## License
 

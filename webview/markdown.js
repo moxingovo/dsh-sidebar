@@ -14,16 +14,18 @@
       codes.push(c)
       return '\u0000CODE' + (codes.length - 1) + '\u0000'
     })
+    // 注意:out 已经整体 escape 过了,下面取到的 t / url / code 都是转义后的文本,
+    // 再转一次就会把 <div> 显示成 &lt;div&gt;、把 URL 里的 & 变成 &amp;amp;。
     out = out.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (_, t, url) => {
       if (/^https?:\/\//.test(url) || /^mailto:/.test(url)) {
-        return '<a href="' + escapeHtml(url) + '" target="_blank" rel="noopener">' + escapeHtml(t) + '</a>'
+        return '<a href="' + url + '" target="_blank" rel="noopener">' + t + '</a>'
       }
-      return escapeHtml(t)
+      return t
     })
     out = out.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
     out = out.replace(/(^|[^*])\*([^*]+)\*(?!\*)/g, '$1<em>$2</em>')
     out = out.replace(/~~([^~]+)~~/g, '<del>$1</del>')
-    out = out.replace(/\u0000CODE(\d+)\u0000/g, (_, i) => '<code>' + escapeHtml(codes[Number(i)]) + '</code>')
+    out = out.replace(/\u0000CODE(\d+)\u0000/g, (_, i) => '<code>' + codes[Number(i)] + '</code>')
     return out
   }
   function render(text) {

@@ -155,7 +155,9 @@ send({ type: 'sessionList',
 })
 check('a fresh list without an archive set keeps it hidden', rowsIn('session-arch').length === 0)
 
-// The host may also answer with the full list and an empty set; never trust it back.
+// 归档集合:字段在就是权威结果 —— 空数组也一样(宿主读不到集合时会整个省略字段,
+// 所以"空"只可能是"确实没有归档的"。否则在别处取消归档最后一个会话后,面板会一直
+// 把它藏着,直到手动重载。
 send({ type: 'sessionList',
   items: [
     { sessionId: 'session-keep', cwd: 'C:\\ws2', title: 'keep', updatedAt: 9, messages: 2 },
@@ -164,7 +166,16 @@ send({ type: 'sessionList',
   archivedIds: [],
   workspacePath: 'C:\\ws2',
 })
-check('an empty archive set does not resurrect archived rows', rowsIn('session-arch').length === 0)
+check('an authoritative empty archive set releases the row (unarchived elsewhere)', rowsIn('session-arch').length === 1)
+// 反过来:字段缺席 = 集合未知,保持上一次的判断,不能凭空改变可见性。
+send({ type: 'sessionList',
+  items: [
+    { sessionId: 'session-keep', cwd: 'C:\\ws2', title: 'keep', updatedAt: 9, messages: 2 },
+    { sessionId: 'session-arch', cwd: 'C:\\ws2', title: 'archived one', updatedAt: 8, messages: 2 },
+  ],
+  workspacePath: 'C:\\ws2',
+})
+check('a list without the archive set keeps the previous answer', rowsIn('session-arch').length === 1)
 
 // Opening the archived conversation, then archiving the OPEN one, closes it.
 send({ type: 'sessionOpened', sessionId: 'session-keep', hasMore: false, blank: false, events: [] })

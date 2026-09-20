@@ -11,8 +11,8 @@
 ┌─ Extension Host(extension.js)─────────────────────────────┐
 │  ServerManager:探测/附着/自启 3080,DSH_HOME=~/.dsh        │
 │  PanelBridge:webview ↔ 协议客户端 双向桥接与重试          │
-│  DshClient(src/protocol.js):POST /api/* RPC               │
-│  + 双 WebSocket 下行(src/websocket.js 极简 RFC6455)       │
+│  DshClient(src/protocol.js):POST /api/<ns>/<method> RPC    │
+│  + 一条 /api/remote.mux 下行(src/websocket.js 极简 RFC6455)│
 └─────────────── 127.0.0.1:3080 ────────────────────────────┘
 ┌─ DeepSeek Harness 服务端(不动、不改)──────────────────────┐
 │  client-request/client-response 信封、mux/host 帧、       │
@@ -27,9 +27,9 @@
 2. **会话归属用 `workspaceId`**:实测服务端 `session.create` 传 `cwd` 不会
    入组(落"未分组"),必须查/建工作区后传 `workspaceId`。
 3. **跨端同步的现实边界**(重要):
-   - `selectModel` **不产生任何推送帧/投影**(实测 mux 流零帧),因此模型/
-     推理档跨端一致靠**2 秒短轮询** + 每次点开药丸即时拉取;面板→服务端
-     是即时 RPC。
+   - `selectModel` **不产生任何推送帧/投影**(实测 mux 流零帧),跨端一致靠
+     **按需刷新**(点开药丸时拉一次 `session.models`)+ `modelSelection` 投影;
+     曾经的 2 秒轮询已移除 —— 它会重建标题栏并吞掉点击。面板→服务端是即时 RPC。
    - 沙箱权限走 `/permission <preset>` 命令 + `permissions` **投影**,投影
      会推送,因此权限两端**天然实时同步**。
    - 计划模式(/plan)有 `plan/mode` 事件推送;本 UI 不渲染(按需求移除药丸)。
@@ -42,13 +42,27 @@
    - 本构建(1.136)不渲染 secondarySidebar 容器图标,常驻入口采用
      `editor/title` 菜单 + titleBar 模式 + 活动栏兜底。
 
+## 会话生命周期(0.6.2 起的规则)
+
+- **空白会话不占列表位**:宿主标的 `blank`(没有 `turn/start` 的空日志)只在
+  "当前打开"或"用户在里面打过字"时显示;切走即从抽屉消失。服务端没有会话删除
+  接口(只有 `workspace.archiveSession`),所以宿主的"新建会话"走 harness 的
+  **reuse-or-create**:已有空白会话就直接复用它,不攒空壳。
+- **草稿按会话记账**:webview 只有一个输入框,切换会话时把草稿存进 `S.drafts`、
+  回来再放回去;否则草稿会跟着人跑(发送时发错对象),空白会话里打了一半的字也会丢。
+- **复用判断走缓存**:`session.list` 要读整个会话仓的元数据(实测本机 178 个会话、
+  148MB),所以宿主把 `listSessions` 的结果缓存下来给复用判断用,并在归档/新建时
+  同步失效;面板点"新建"时会带上 `excludeSessionId`,避免陈旧缓存把已经聊过的
+  会话当空白复用。
+
 ## 代码约定
 
-- **纯 JavaScript,零构建**:`node --check` + mock-verify(扩展契约)+
-  ui-smoke(jsdom 渲染)+ protocol-smoke / bridge-e2e(真实服务端)。
+- **纯 JavaScript,零构建**:`node --check` + `test/*.js` 里的回归脚本(10 个带断言
+  的套件,共 217 项;jsdom 套件需 `DSH_CHECKOUT_NODE_MODULES`)。
 - webview 与宿主之间只传**可序列化 JSON**;服务端 RPC 信封格式见
   [docs/protocol.md](docs/protocol.md)。
-- 版本号三处同步:package.json、extension.js 的 hello、面板标题 brand-ver。
+- 版本号只有一处权威:`package.json`(git tag 与 CHANGELOG 跟上即可)。面板顶栏显示的
+  是**当前对话名**,不再显示扩展版本;`hello` 消息里那个写死的版本号已删除。
 - UI 为全中文设计(按需求),不做 l10n 双语切换——这是与参考实现
   (skymecode/deepseek-harness-for-vscode)的**有意差异**,勿照搬其
   package.nls/l10n 机制。

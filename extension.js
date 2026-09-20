@@ -290,7 +290,11 @@ class ServerManager {
         }
         this.setState('idle', 'stopped')
         this.broadcast('serverState')
-        if (!this.expectExit && !disposing && cfg().spawnIfMissing) {
+        // 这次退出是不是我们自己要求重启造成的?读了就清 —— 否则第一次手动重启之后
+        // 这个标记一直挂着,后面真崩溃时再也不会自动拉起。
+        const expectedExit = this.expectExit
+        this.expectExit = false
+        if (!expectedExit && !disposing && cfg().spawnIfMissing) {
           // A silent 0xC0000409 exit is a crash, not a shutdown: restarting it
           // every 1.5s turns one bad state into a visible crash loop. Back off,
           // and stop after three crashes in five minutes with the code on screen.
@@ -337,6 +341,13 @@ class ServerManager {
   }
 
   async restart() {
+    if (this.state === 'starting') {
+      // 正在启动:等它落地再决定 —— 直接往下走会把状态清成 idle 再起第二个进程,
+      // 第一个就成了没人管的孤儿,而且 ensure() 的去重也被清空。
+      output.appendLine('[dsh] restart requested while starting — waiting for the in-flight start')
+      try { await this.starting } catch {}
+      return
+    }
     if (this.state !== 'ready' || !this.child) {
       // 附着外部实例(桌面 harness)或失败态:重新探测并附着,而不是弹误导提示
       output.appendLine('[dsh] restart requested (attached/external) — reconnecting')
@@ -422,6 +433,12 @@ class PanelBridge {
     this.hostUp = false
     this.currentSessionId = null
     this.serverRoot = null // harness 服务端工作区根目录(describe.cwd),会话以它分组
+    // 会话列表缓存:listSessions 每次都拿到同一份结果,顺手存下来给"新建复用空白
+    // 会话"用。session.list 要读上百个会话文件的元数据,每点一次"新建"都为复用
+    // 多付一次,就是"反复新建会卡"的来源。
+    this.sessionCache = []
+    this.archivedCache = new Set()
+    this.sessionCacheAt = 0
     webview.onDidReceiveMessage((m) => this.onMessage(m).catch((e) => this.error('handler', e)))
   }
 
@@ -464,6 +481,8 @@ class PanelBridge {
       case 'openBrowser': return this.openBrowser()
       case 'getSettings': return this.pushSettings()
       case 'lastSession': return this.lastSession(m)
+    // 面板设置里的"重载侧边栏"按钮发的是 reload:以前没有这个 case,点了等于没点。
+    case 'reload': return reloadPanels()
       default: return
     }
   }
@@ -472,7 +491,8 @@ class PanelBridge {
     // ensure the service, then attach the protocol client and describe.
     try { await manager.ensure() } catch (e) { this.error('boot', e) }
     this.port = manager.port
-    this.send({ type: 'hello', port: this.port, version: '0.4.2' })
+    // 不再带写死的扩展版本号:webview 从来不读它,留着只会和 package.json 走岔。
+    this.send({ type: 'hello', port: this.port })
     this.send({ type: 'workspace', path: firstWorkspacePath() })
     // Waiting matters: describe before the cookie exists is a guaranteed 401.
     // A client already installed by the serverState handler stays as it is —
@@ -708,14 +728,19 @@ class PanelBridge {
           await sleep(400)
         }
       }
-      // 会话列表 = VS Code 当前文件夹对应的 harness 工作区(大小写/斜杠归一化匹配)
-      const ws = firstWorkspacePath()
-      const inWorkspace = (ws && list.items || []).filter((s) => normPath(s.cwd) === normPath(ws))
+      // 会话列表 = VS Code 当前文件夹对应的 harness 工作区(大小写/斜杠归一化匹配)。
+      // 没打开文件夹时用 ~ 兜底(与 createSession 同一套回退):旧写法 (ws && items || [])
+      // 会整个塌成空数组,面板里连"显示全部"都救不回来。
+      const ws = firstWorkspacePath() || os.homedir()
+      const inWorkspace = (list.items || []).filter((s) => normPath(s.cwd) === normPath(ws))
       // …再剔掉 subagent 的子会话。它们是子代理自己跑任务的会话日志,不是用户开的对话:
       // DSH 客户端把它们挂在父会话的 subagent catalog 里,从不列进对话列表。列在这里
       // 就是抽屉里那一堆 "你是资深…/You are doing…" 行——既点不出所以然,归档也挡不住
       // (归档只隐藏,不删除,而它们本来就不该出现)。
       const items = inWorkspace.filter(isConversation)
+      this.sessionCache = items
+      this.sessionCacheAt = Date.now()
+      if (archivedIds !== null) this.archivedCache = new Set(archivedIds)
       const subagents = inWorkspace.length - items.length
       output.appendLine('[dsh] session.list total=' + (list.items || []).length + ' workspace=' + (ws || '(none)') + ' conversations=' + items.length + ' subagentSessions=' + subagents + ' archived=' + (archivedIds === null ? '(unavailable — keeping current)' : archivedIds.length))
       this.send({
@@ -727,10 +752,84 @@ class PanelBridge {
     } catch (e) { this.error('session.list', e) }
   }
 
+  /**
+   * 把缓存里的会话列表原样推给面板(零 RPC)。宿主缓存和面板列表同源,复用空白会话时
+   * 用它兜底:面板刚激活、第一份列表还没到时点了新建,复用的那个会话也能立刻出现在
+   * 抽屉里,而不是要等下一次刷新。
+   */
+  sendCachedList() {
+    // 还没有任何列表结果时不要推:一份空列表会把面板的抽屉清空。
+    if (this.sessionCacheAt === 0) return
+    this.send({
+      type: 'sessionList',
+      items: this.sessionCache,
+      archivedIds: [...this.archivedCache],
+      workspacePath: firstWorkspacePath() || null,
+    })
+  }
+
+  /**
+   * 本工作区里可以复用的空白会话(blank = 没有 turn/start 的空日志)。
+   * 面板退出一个没发过消息的新会话时会把它从列表里清掉,服务端又不提供会话删除接口
+   * (只有 workspace.archiveSession,"归档"不该拿来当删除用),所以"新会话"走
+   * harness 的 reuse-or-create:已有空白会话就直接打开它,不再造第二个空壳。
+   * @param wsRoot - 目标工作区根路径(cwd 归一化后比较)。
+   * @returns 可复用的空白会话条目,没有则 null。
+   */
+  async findBlankSession(wsRoot, excludeId) {
+    const usable = (s) => isConversation(s) && s.blank === true
+      && normPath(s.cwd) === normPath(wsRoot)
+      && !this.archivedCache.has(s.sessionId)
+      && s.sessionId !== excludeId
+    const cached = this.sessionCache.filter(usable)
+    if (cached.length > 0) return cached[0]
+    // 已经有列表结果(哪怕里面没有空白会话)就不必再问一次服务端:复用判断值
+    // 不上一次 session.list 的往返。
+    if (this.sessionCacheAt > 0) return null
+    // 还没有任何列表结果(面板刚激活就点了新建)才补一次查询。
+    try {
+      const list = await this.rpc('session.list', {})
+      let archived = null
+      try { archived = new Set((await this.rpc('workspace.list', {})).archivedSessionIds || []) } catch {}
+      // 归档集合读不到就别猜:宁可不复用(照常新建一个),也不能把一个已归档的空白
+      // 会话当成可复用对象翻出来。
+      if (archived === null) {
+        output.appendLine('[dsh] blank-session reuse skipped: archive set unavailable')
+        return null
+      }
+      this.archivedCache = archived
+      // 顺手把这份结果也当成缓存(按本工作区过滤,与 listSessions 的推送形状一致),
+      // 复用命中时 sendCachedList 才有东西可推。
+      this.sessionCache = (list.items || []).filter((s) => isConversation(s) && normPath(s.cwd) === normPath(wsRoot))
+      this.sessionCacheAt = Date.now()
+      return (list.items || []).find((s) => usable(s)) || null
+    } catch (e) {
+      output.appendLine('[dsh] blank-session lookup failed: ' + (e && e.message))
+      return null
+    }
+  }
+
   async createSession(m) {
     try {
       // 新会话必须落在 harness 工作区(实证:cwd 不会入组,workspaceId 才会)
       const wsRoot = firstWorkspacePath() || os.homedir()
+      // 面板报"当前会话已经发过消息"时,把它从复用候选里剔掉并就地更新缓存 ——
+      // 否则陈旧缓存会把已经聊过的会话当成空白会话复用,点"新建"会毫无反应。
+      if (m.excludeSessionId) {
+        this.sessionCache = this.sessionCache.filter((s) => s.sessionId !== m.excludeSessionId)
+      }
+      // 复用优先,但带预设的"新建并继续"是有意为之,照旧新建。
+      if (!m.agentPreset) {
+        const reusable = await this.findBlankSession(wsRoot, m.excludeSessionId)
+        if (reusable) {
+          output.appendLine('[dsh] session.create reused blank session ' + reusable.sessionId)
+          // 不再补一次 session.list:复用的那个会话本来就在面板列表里(缓存与面板
+          // 同一份数据),这一趟正是卡顿的来源。改为把缓存原样推给面板兜底。
+          this.sendCachedList()
+          this.send({ type: 'sessionCreated', sessionId: reusable.sessionId, agentPreset: reusable.agentPreset })
+          return
+        }
+      }
       const workspaces = await this.rpc('workspace.list', {}).catch(() => ({ items: [] }))
       let target = (workspaces.items || []).find((w) => normPath(w.path) === normPath(wsRoot)) || null
       if (!target) {
@@ -759,6 +858,9 @@ class PanelBridge {
         this.rpc('session.models', { sessionId: m.sessionId }).catch(() => null),
         this.rpc('agentPreset.list', {}).catch(() => ({ presets: [], authorable: false })),
       ])
+      // 用户可能在这段等待里又点了另一个会话:后到的快照不能覆盖它,否则面板显示 A、
+      // 输入框发往 A,而用户以为自己在 B。
+      if (this.currentSessionId !== m.sessionId) return
       const blank = !(history.events || []).some((e) => e.event.type === 'turn/start')
       const projections = history.projections || null
       if (projections && projections.values) {
@@ -785,6 +887,8 @@ class PanelBridge {
   }
 
   async closeSession(m) {
+    // 关掉会话就把服务端那条 follow 也退掉,否则它的帧会一直推过来(见 closeFollow)。
+    try { if (this.client) this.client.closeFollow(m.sessionId) } catch {}
     this.send({ type: 'sessionClosed', sessionId: m.sessionId })
   }
 
@@ -866,6 +970,11 @@ class PanelBridge {
   async archiveSession(m) {
     try {
       const value = await this.rpc('workspace.archiveSession', { sessionId: m.sessionId })
+      // 缓存同步:归档只隐藏,服务端列表里那条还在 —— 不更新缓存的话,一个被归档的
+      // 空白会话还能被"新建会话"复用它。
+      if (Array.isArray(value.archivedSessionIds)) this.archivedCache = new Set(value.archivedSessionIds)
+      else this.archivedCache.add(m.sessionId)
+      this.sessionCache = this.sessionCache.filter((s) => s.sessionId !== m.sessionId)
       this.send({ type: 'sessionArchived', sessionId: m.sessionId, archivedIds: value.archivedSessionIds })
     } catch (e) { this.error('workspace.archiveSession', e) }
   }

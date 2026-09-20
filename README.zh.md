@@ -6,18 +6,22 @@
 
 > 非官方社区扩展,与 DeepSeek 无关。
 
+<p align="center"><img src="media/demo-panel.png" alt="DSH Web Panel:VS Code 里的 Claude Code 风格 DSH 侧边栏" width="440"></p>
+
+- **界面(Claude Code 风格)**:顶栏左侧是**当前对话的名字**,右侧只有会话列表与新建会话两个圆钮;底部功能区整块一圈 DeepSeek 蓝描边,输入区与工具行之间一条分隔线,药丸/发送键/占用环同比放大。
+- **空白会话与草稿**:新建对话没发消息就切走,它不会占着列表;在里面打了字则会被留下(草稿按会话记账,切回来原样还在,也不会串到别的会话),下次点"新建"优先复用那个空会话而不是再造一个。
 - **入口(与 Claude Code 一致)**:右上角辅助栏的 **DeepSeek Harness 图标**(DeepSeek 蓝)——点击即调起右侧对话面板;状态栏左侧 **DSH** 显示服务状态并可开关;快捷键 `Ctrl+Alt+D`。
 - **会话**:仅显示当前工作区的会话,可新建/切换/归档/重命名/fork;上下文用量条为服务端真实 token 数据。
 - **模型/预设**:模型与推理档位下拉;预设仅在空白会话可切换(会话开始后锁定,服务端约束)。
 - **能力**:流式回复、停止、工具卡/审批卡/Todo/时间线、图片附件(vision)、`/compact` 压缩、Markdown+代码块。
-- **协议**:`POST /api/*` RPC + 双 WebSocket 下行(mux/host 帧),详见 [docs/protocol.md](docs/protocol.md)。
+- **协议**:0.1.6 Typert 网关 —— `POST /api/<ns>/<method>`(命名参数)+ 一条 `/api/remote.mux` WebSocket 承载全部流(session follow、workspace 基线、`$events`),详见 [docs/protocol.md](docs/protocol.md)。
 
 ## 安装
 
 从 .vsix 安装:
 
 ```
-code --install-extension dsh-webview-0.3.1.vsix
+code --install-extension dsh-webview-0.6.2.vsix
 ```
 
 或自行打包(仓库根目录):
@@ -25,7 +29,7 @@ code --install-extension dsh-webview-0.3.1.vsix
 ```
 npx @vscode/vsce package
 pwsh -File test\fix-vsix.ps1   # 修复 vsce 对 package.json 中文的编码损坏
-code --install-extension dsh-webview-0.3.1.vsix
+code --install-extension dsh-webview-0.6.2.vsix
 ```
 
 > ⚠️ 已知:某些 Windows 环境下 `vsce package` 会把 package.json 的 UTF-8 中文
@@ -87,12 +91,24 @@ VS Code 1.136 把辅助栏容器图标(标题栏/右缘图标条)存在**全局�
 
 ## 开发
 
+零构建:纯 JS,`node --check` + 一组回归脚本(`test/*.js`,目前 10 个带断言的套件共 217 项)。
+
 ```
-node test/mock-verify.js      # mock vscode API 验证扩展契约
-node test/ui-smoke.js         # jsdom 渲染验证 webview UI(24 项)
-node test/protocol-smoke.js   # 真实服务端到端(建会话/流式/停止/归档)
-node test/bridge-e2e.js       # 完整桥接链路(mock vscode + 真 3080)
+node test/respond-wire-verify.js        # 审批/问答应答的 wire 形状(mock 0.1.6 网关)
+node test/session-list-filter-verify.js # 会话列表过滤(工作区/子代理/归档)
+node test/blank-session-verify.js       # 空白会话进出规则 + 草稿不丢 + 复用缓存(31 项)
+node test/panel-fixes-verify.js         # 复查修复:转义/队列/归档集合/投影/附件/翻页(22 项)
+node test/header-composer-verify.js     # 顶栏/功能区结构与样式契约(34 项)
+node test/approval-card-verify.js       # 审批卡渲染与去重(jsdom,35 项)
+node test/live-sync-verify.js           # 实时事件折叠路径(8 项)
+node test/pill-menu-verify.js           # 药丸菜单生命周期与监听器泄漏(11 项)
+node test/spawn-verify.js               # 启动链(checkout / dsh CLI / npx)
+node test/launch-flags-verify.js        # 启动参数拼装
+node test/attach-paste-verify.js        # 图片附件粘贴/拖入
+node test/real-launch-verify.js         # 真起一个 dsh web 服务(需本机 checkout,手动跑)
 ```
+
+jsdom 相关套件需要 `DSH_CHECKOUT_NODE_MODULES` 指向带 jsdom 的 `node_modules`。
 
 ## License
 

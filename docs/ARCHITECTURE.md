@@ -58,7 +58,7 @@
 ## 代码约定
 
 - **纯 JavaScript,零构建**:`node --check` + `test/*.js` 里的回归脚本(10 个带断言
-  的套件,共 217 项;jsdom 套件需 `DSH_CHECKOUT_NODE_MODULES`)。
+  的套件,共 227 项;jsdom 套件需 `DSH_CHECKOUT_NODE_MODULES`)。
 - webview 与宿主之间只传**可序列化 JSON**;服务端 RPC 信封格式见
   [docs/protocol.md](docs/protocol.md)。
 - 版本号只有一处权威:`package.json`(git tag 与 CHANGELOG 跟上即可)。面板顶栏显示的

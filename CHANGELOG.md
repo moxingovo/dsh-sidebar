@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.6.3
+
+(2026-09-28) 在 **DeepSeek Harness 0.1.7-rc.2** 上确认兼容:**协议层无需改动**。对照 0.1.6 与 0.1.7 的网关类型定义,0.1.7 对 wire 只有增量改动 —— WebSocket 流协议新增 `item` / `end` 两个上行帧,typert 协议新增 uplink 类型与 `ctx.invocation`;本扩展使用的 `POST /api/<ns>/<method>` 一元调用、单条 `/api/remote.mux` WebSocket、`$events` 与鉴权 cookie 流程全部未删改。
+
+本版把仓库里的协议文档从 0.1.0 时代校真到 0.1.6 Typert 网关,并把测试清单计数与实际套件对齐。**扩展运行时代码与 0.6.2 相同**,升版本只为把这次兼容性确认与文档修正固化成一个可安装的发布。
+
+### 文档
+- `docs/protocol.md` 重写为 0.1.6 Typert 网关的完整参考:先换 cookie 再开 socket 的鉴权、`POST /api/<ns>/<method>` 命名参数、单条 mux WebSocket 承载的全部流、帧名与归一化;并写明 **0.1.0–0.1.5 是另一套 wire**(单层 `POST /api/<method>` + 两条 SSE + `POST /api/respond`),与本版不互通,0.5.0 是那条线的最后一版。
+- `RELEASE.md` 按 tag 驱动的 CI 发布流程重写(打包、从 CHANGELOG 抓正文、挂 `.vsix`)。
+- README(中英)的测试清单计数与实际套件对齐;`extension.js` / `webview/app.js` 里指代旧基线(rc.5 契约)的注释改为指向 `src/protocol.js` 与 `docs/protocol.md`。
+
+### 验证
+- `node --check`:5 个 JS 文件全过。
+- RELEASE.md §2 的 11 个回归套件全过(`respond-wire` / `session-list-filter` / `launch-flags` / `approval-card` / `attach-paste` / `live-sync` / `pill-menu` / `header-composer` / `blank-session` / `panel-fixes` / `spawn`)。
+- 本机已安装本版源码构建的 .vsix(旧 0.3.x 已卸载),附着到运行中的 0.1.7-rc.2 服务(127.0.0.1:3080)。
+
 ## 0.6.2
 
 (2026-09-20) 界面向 Claude Code 靠拢 + 空白会话的进出规则(新建对话没发消息就切走不再留在列表里,草稿按会话保留)。回归脚本 `test/*.js` 共 12 个脚本,带断言的 10 个套件 217 项全绿。

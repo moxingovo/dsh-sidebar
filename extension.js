@@ -3,7 +3,8 @@
 // Replaces the old iframe-embedded web GUI (R1) with a self-written native
 // chat front-end (Claude Code style). Back-end = the existing dsh web service
 // on dshWeb.port (127.0.0.1:3080) — no second gateway, no DSH_HOME isolation.
-// Protocol lives in src/protocol.js (P0 mapping module, see service rc.5).
+// Protocol lives in src/protocol.js (the mapping module for the 0.1.6 Typert
+// gateway) — wire reference: docs/protocol.md.
 const vscode = require('vscode')
 const { spawn } = require('node:child_process')
 const http = require('node:http')

@@ -18,7 +18,7 @@
 - **会话**:仅显示当前工作区的会话,可新建/切换/归档/重命名/fork;上下文用量条为服务端真实 token 数据。
 - **模型/预设**:模型与推理档位下拉;预设仅在空白会话可切换(会话开始后锁定,服务端约束)。
 - **能力**:流式回复、停止、工具卡/审批卡/Todo/时间线、图片附件(vision)、`/compact` 压缩、Markdown+代码块。
-- **协议**:0.1.6 Typert 网关 —— `POST /api/<ns>/<method>`(命名参数)+ 一条 `/api/remote.mux` WebSocket 承载全部流(session follow、workspace 基线、`$events`),详见 [docs/protocol.md](docs/protocol.md)。
+- **协议**:0.1.6 Typert 网关 —— `POST /api/<ns>/<method>`(命名参数)+ 一条 `/api/remote.mux` WebSocket 承载全部流(session follow、workspace 基线、`$events`),详见 [docs/protocol.md](docs/protocol.md)。**已在 0.1.7-rc.2 上确认**:0.1.7 只新增了上行帧(`item` / `end`)与 typert 的 uplink 类型,协议层无需改动。
 
 ## 安装
 
@@ -95,20 +95,20 @@ VS Code 1.136 把辅助栏容器图标(标题栏/右缘图标条)存在**全局�
 
 ## 开发
 
-零构建:纯 JS,`node --check` + 一组回归脚本(`test/*.js`,目前 10 个带断言的套件共 217 项)。
+零构建:纯 JS,`node --check` + 一组回归脚本(`test/*.js`,目前 10 个带断言的套件共 227 项)。
 
 ```
-node test/respond-wire-verify.js        # 审批/问答应答的 wire 形状(mock 0.1.6 网关)
-node test/session-list-filter-verify.js # 会话列表过滤(工作区/子代理/归档)
+node test/respond-wire-verify.js        # 审批/问答应答的 wire 形状(mock 0.1.6 网关,18 项)
+node test/session-list-filter-verify.js # 会话列表过滤(工作区/子代理/归档,13 项)
 node test/blank-session-verify.js       # 空白会话进出规则 + 草稿不丢 + 复用缓存(31 项)
 node test/panel-fixes-verify.js         # 复查修复:转义/队列/归档集合/投影/附件/翻页(22 项)
 node test/header-composer-verify.js     # 顶栏/功能区结构与样式契约(34 项)
-node test/approval-card-verify.js       # 审批卡渲染与去重(jsdom,35 项)
+node test/approval-card-verify.js       # 审批卡渲染与去重(jsdom,36 项)
 node test/live-sync-verify.js           # 实时事件折叠路径(8 项)
 node test/pill-menu-verify.js           # 药丸菜单生命周期与监听器泄漏(11 项)
-node test/spawn-verify.js               # 启动链(checkout / dsh CLI / npx)
-node test/launch-flags-verify.js        # 启动参数拼装
-node test/attach-paste-verify.js        # 图片附件粘贴/拖入
+node test/spawn-verify.js               # 启动链(checkout / dsh CLI / npx,jsdom)
+node test/launch-flags-verify.js        # 启动参数拼装(15 项)
+node test/attach-paste-verify.js        # 图片附件粘贴/拖入(29 项)
 node test/real-launch-verify.js         # 真起一个 dsh web 服务(需本机 checkout,手动跑)
 ```
 

@@ -2,7 +2,7 @@
 // DSH native sidebar front-end (Claude Code style, 100% VS Code theme vars).
 // Talks to the extension host via postMessage; all server I/O goes through
 // the host (path B: webview ↔ extension.js ↔ dsh service on 3080).
-// Wire semantics per src/protocol.js (rc.5 contract).
+// Wire semantics per src/protocol.js (0.1.6 gateway; see docs/protocol.md).
 ;(() => {
   const vscode = acquireVsCodeApi()
   const $ = (sel) => document.querySelector(sel)

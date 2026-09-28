@@ -10,8 +10,10 @@ front-end (no iframe) that reuses your existing dsh web service
 >
 > **Harness compatibility**: 0.6.x speaks the **0.1.6** wire (Typert API Gateway:
 > cookie-authenticated `/api/<ns>/<method>`, one `remote.mux` WebSocket, durable
-> events plus process-local assistant frames). For DeepSeek Harness **0.1.0–0.1.5**
-> use release **0.5.0**; the two wires are not interchangeable.
+> events plus process-local assistant frames). Verified on **0.1.7-rc.2** as well:
+> 0.1.7 only adds uplink frames (`item` / `end`) and typert uplink types, so no
+> protocol change was needed. For DeepSeek Harness **0.1.0–0.1.5** use release
+> **0.5.0**; the two wires are not interchangeable.
 
 <p align="center"><a href="media/demo-panel.png"><img src="https://cdn.jsdelivr.net/gh/moxingovo/dsh-sidebar@main/media/demo-panel.png" alt="DSH Sidebar: a Claude Code-style DSH sidebar inside VS Code (screenshot)" width="440"></a></p>
 
@@ -122,20 +124,20 @@ Fix: `test\fix-state.js` — removes Chat from the global pinned list, registers
 ## Development
 
 No build step: plain JS, checked with `node --check` plus a set of regression scripts
-(`test/*.js`; 10 suites carry assertions, 217 checks in total right now).
+(`test/*.js`; 10 suites carry assertions, 227 checks in total right now).
 
 ```
 node test/respond-wire-verify.js        # approval/question answer wire shape (18 checks, mock 0.1.6 gateway)
-node test/session-list-filter-verify.js # session-list filtering (workspace / subagent / archived)
+node test/session-list-filter-verify.js # session-list filtering (workspace / subagent / archived) (13 checks)
 node test/blank-session-verify.js       # blank-session lifecycle + per-session drafts + reuse cache + failed-send restore (31 checks)
 node test/panel-fixes-verify.js         # markdown escaping, queue rendering, archive set, projections, attachments, paging (22 checks)
 node test/header-composer-verify.js     # header & composer structure + style contract (34 checks)
-node test/approval-card-verify.js       # approval card rendering + dedup (35 checks, jsdom)
+node test/approval-card-verify.js       # approval card rendering + dedup (36 checks, jsdom)
 node test/live-sync-verify.js           # live event folding (8 checks)
 node test/pill-menu-verify.js           # pill menu lifecycle + listener leaks (11 checks)
-node test/spawn-verify.js               # launch chain (checkout / dsh CLI / npx)
-node test/launch-flags-verify.js        # launch argument assembly
-node test/attach-paste-verify.js        # image attachment paste/drop
+node test/spawn-verify.js               # launch chain (checkout / dsh CLI / npx) (jsdom)
+node test/launch-flags-verify.js        # launch argument assembly (15 checks)
+node test/attach-paste-verify.js        # image attachment paste/drop (29 checks)
 node test/real-launch-verify.js         # spawns the real dsh web server (needs a local checkout; manual)
 ```
 

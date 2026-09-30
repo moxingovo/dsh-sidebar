@@ -10,10 +10,20 @@ front-end (no iframe) that reuses your existing dsh web service
 >
 > **Harness compatibility**: 0.6.x speaks the **0.1.6** wire (Typert API Gateway:
 > cookie-authenticated `/api/<ns>/<method>`, one `remote.mux` WebSocket, durable
-> events plus process-local assistant frames). Verified on **0.1.7-rc.2** as well:
-> 0.1.7 only adds uplink frames (`item` / `end`) and typert uplink types, so no
+> events plus process-local assistant frames). Verified on **0.1.7-rc.2** and on
+> **0.2.0-rc.2** — the runtime the official Desktop app bundles — as well: 0.1.7
+> only adds uplink frames (`item` / `end`) and typert uplink types, and 0.2.0
+> changed no wire at all (`packages/typert/*` source is byte-identical), so no
 > protocol change was needed. For DeepSeek Harness **0.1.0–0.1.5** use release
 > **0.5.0**; the two wires are not interchangeable.
+>
+> **Running next to the official Desktop app**: the Desktop shell bundles its own
+> dsh runtime and serves it on **19387**, keeping its credentials inside Electron.
+> This extension does not attach to it — it keeps its own server on `dshWeb.port`
+> (default **3080**) as before. Both use the same `~/.dsh`, so sessions, plugins
+> and settings are shared and show up in either UI; just expect two servers while
+> both are open. Pointing `dshWeb.port` at 19387 is not supported: the extension
+> cannot read the Desktop app's launch token.
 
 <p align="center"><a href="media/demo-panel.png"><img src="https://cdn.jsdelivr.net/gh/moxingovo/dsh-sidebar@main/media/demo-panel.png" alt="DSH Sidebar: a Claude Code-style DSH sidebar inside VS Code (screenshot)" width="440"></a></p>
 

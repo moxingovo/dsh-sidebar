@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.6.4
+
+(2026-09-30) 在 **DeepSeek Harness 0.2.0-rc.2** 上确认兼容 —— 也就是**官方桌面端内置的那个运行时**(macOS/Windows 桌面端自带 dsh 运行时与插件管理,默认监听 19387)。**协议层与本扩展代码都不需要改动**:
+
+- 逐个包比对过 0.1.7-rc.2 与 0.2.0-rc.2 的源码,wire 相关部分零改动:`packages/typert/*` 只有 4 个 `package.json`(版本元数据)变化,协议源码逐字节相同;0.2.0 新增的 `isRemoteUplinkItem` / `typertOwnedValue` 等是增量。
+- 所以本扩展用的 `POST /api/<ns>/<method>` 一元调用、单条 `/api/remote.mux` WebSocket、`$events`、鉴权 cookie 流程在 0.2.0 上照旧。
+
+### 与官方桌面端并存的说明(README 同步)
+
+桌面端把 dsh 运行时**打包在 Electron 里**并监听 **19387**,凭据留在 Electron 内存中。本扩展**不附着到它**:照旧在 `dshWeb.port`(默认 **3080**)上附着或自启自己的服务。两边共用同一个 `~/.dsh`,所以会话、插件、设置是同一份,在哪个界面都能看到 —— 同时开着就是两个服务在跑,这是预期行为。**不要**把 `dshWeb.port` 指到 19387:扩展拿不到桌面端的启动令牌,连不上。
+
+### 验证
+
+- `node --check`:5 个 JS 文件全过。
+- RELEASE.md §2 的 11 个回归套件全过。
+
 ## 0.6.3
 
 (2026-09-28) 在 **DeepSeek Harness 0.1.7-rc.2** 上确认兼容:**协议层无需改动**。对照 0.1.6 与 0.1.7 的网关类型定义,0.1.7 对 wire 只有增量改动 —— WebSocket 流协议新增 `item` / `end` 两个上行帧,typert 协议新增 uplink 类型与 `ctx.invocation`;本扩展使用的 `POST /api/<ns>/<method>` 一元调用、单条 `/api/remote.mux` WebSocket、`$events` 与鉴权 cookie 流程全部未删改。

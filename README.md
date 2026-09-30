@@ -20,10 +20,27 @@ front-end (no iframe) that reuses your existing dsh web service
 > **Running next to the official Desktop app**: the Desktop shell bundles its own
 > dsh runtime and serves it on **19387**, keeping its credentials inside Electron.
 > This extension does not attach to it — it keeps its own server on `dshWeb.port`
-> (default **3080**) as before. Both use the same `~/.dsh`, so sessions, plugins
-> and settings are shared and show up in either UI; just expect two servers while
-> both are open. Pointing `dshWeb.port` at 19387 is not supported: the extension
-> cannot read the Desktop app's launch token.
+> (default **3080**) as before, so expect two servers while both are open.
+> Pointing `dshWeb.port` at 19387 is not supported: the extension cannot read the
+> Desktop app's launch token.
+>
+> Both hosts share `~/.dsh`, which is **the one thing to be careful about**: two
+> hosts cannot hold the same conversation at once — the second one reports that
+> the session is already in use. So start the extension's server deliberately
+> rather than automatically:
+>
+> ```jsonc
+> {
+>   "dshWeb.spawnIfMissing": false,  // never spawn behind your back
+>   "dshWeb.checkout": ""            // rely on `dsh` on PATH, or npx
+> }
+> ```
+>
+> With spawning off, run **"DSH: restart server"** once when you actually want the
+> panel — since **0.6.5** that explicit command still starts a server even when
+> `spawnIfMissing` is false (the setting governs automatic spawning only, which is
+> exactly why the old behaviour could resurrect a server you had just stopped and
+> keep holding the session).
 
 <p align="center"><a href="media/demo-panel.png"><img src="https://cdn.jsdelivr.net/gh/moxingovo/dsh-sidebar@main/media/demo-panel.png" alt="DSH Sidebar: a Claude Code-style DSH sidebar inside VS Code (screenshot)" width="440"></a></p>
 

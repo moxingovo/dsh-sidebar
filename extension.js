@@ -159,10 +159,10 @@ class ServerManager {
 
   get url() { return urlOf(this.port) }
 
-  async ensure() {
+  async ensure(manual = false) {
     if (this.state === 'ready' || this.state === 'attached') return
     if (this.state === 'starting') { await this.starting; return }
-    const p = this.start()
+    const p = this.start(manual)
     this.starting = p
     try { await p } finally { this.starting = null }
   }
@@ -200,13 +200,20 @@ class ServerManager {
     return { ...process.env, DSH_HOME: homeDsh() }
   }
 
-  async start() {
+  /**
+   * @param manual - true when a user-visible command (restartServer, port change,
+   * workspace change) asked for this. dshWeb.spawnIfMissing governs *automatic*
+   * spawning only: with it off, nothing may start a server behind the user's back,
+   * but an explicit command still must be able to (otherwise turning the setting
+   * off would leave no way at all to bring a server up from the UI).
+   */
+  async start(manual = false) {
     this.port = cfg().port
     this.setState('starting', 'connecting…')
     output.appendLine('[dsh] probing ' + this.url)
     if (cfg().attachExisting && await this.awaitExisting()) return
-    if (!cfg().spawnIfMissing) {
-      throw this.fail('no dsh server on port ' + this.port + ' and dshWeb.spawnIfMissing is off — start dsh web yourself or enable the setting.')
+    if (!cfg().spawnIfMissing && manual !== true) {
+      throw this.fail('no dsh server on port ' + this.port + ' and dshWeb.spawnIfMissing is off — start dsh web yourself, run the "DSH: 重启服务" command, or enable the setting.')
     }
     this.cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? os.homedir()
     // --no-open: 0.1.6 opens the default browser on start unless told not to.
@@ -341,7 +348,7 @@ class ServerManager {
     this.broadcast('serverState')
   }
 
-  async restart() {
+  async restart(manual = false) {
     if (this.state === 'starting') {
       // 正在启动:等它落地再决定 —— 直接往下走会把状态清成 idle 再起第二个进程,
       // 第一个就成了没人管的孤儿,而且 ensure() 的去重也被清空。
@@ -353,7 +360,7 @@ class ServerManager {
       // 附着外部实例(桌面 harness)或失败态:重新探测并附着,而不是弹误导提示
       output.appendLine('[dsh] restart requested (attached/external) — reconnecting')
       this.setState('idle', 'reconnecting…')
-      try { await this.ensure() } catch (e) { output.appendLine('[dsh] reconnect failed: ' + e.message) }
+      try { await this.ensure(manual) } catch (e) { output.appendLine('[dsh] reconnect failed: ' + e.message) }
       return
     }
     output.appendLine('[dsh] restart requested')
@@ -361,7 +368,7 @@ class ServerManager {
     this.kill()
     await sleep(800)
     this.setState('idle', 'stopped')
-    await this.ensure()
+    await this.ensure(manual)
   }
 
   kill() {
@@ -1029,7 +1036,7 @@ class PanelBridge {
   }
 
   async restartServer() {
-    await manager.restart()
+    await manager.restart(true)
   }
 
   async openUrl(m) {
@@ -1246,7 +1253,7 @@ function activate(ctx) {
   }))
   ctx.subscriptions.push(vscode.commands.registerCommand('dshPanel.openBrowser', openInBrowser))
   ctx.subscriptions.push(vscode.commands.registerCommand('dshPanel.reload', reloadPanels))
-  ctx.subscriptions.push(vscode.commands.registerCommand('dshPanel.restartServer', () => manager.restart().catch((e) => vscode.window.showErrorMessage('DSH: ' + e.message))))
+  ctx.subscriptions.push(vscode.commands.registerCommand('dshPanel.restartServer', () => manager.restart(true).catch((e) => vscode.window.showErrorMessage('DSH: ' + e.message))))
   // 仅右侧辅助栏容器(与 Claude Code 一致的右上角图标入口)
   ctx.subscriptions.push(vscode.window.registerWebviewViewProvider('dshWebViewAux', new DshViewProvider(), {
     webviewOptions: { retainContextWhenHidden: true },
@@ -1266,13 +1273,13 @@ function activate(ctx) {
     const first = firstWorkspacePath() ?? os.homedir()
     if (first === manager.cwd) return
     output.appendLine('[dsh] workspace folder changed to ' + first + ' — restarting with new workspace root')
-    manager.restart().catch(() => {})
+    manager.restart(true).catch(() => {})
     for (const b of bridges) b.send({ type: 'workspace', path: firstWorkspacePath() })
   }))
   ctx.subscriptions.push(vscode.workspace.onDidChangeConfiguration((e) => {
     if (e.affectsConfiguration(CFG + '.port') && manager.state === 'ready' && manager.child) {
       output.appendLine('[dsh] dshWeb.port changed — restarting')
-      manager.restart().catch(() => {})
+      manager.restart(true).catch(() => {})
     }
     for (const b of bridges) b.send({ type: 'configChanged', config: settingsSnapshot() })
   }))
